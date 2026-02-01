@@ -1,7 +1,5 @@
 # Train classifier 
-"""
-Train Dog Aggression Classifier using YOLOv8 Classification
-"""
+
 from ultralytics import YOLO
 import os
 from pathlib import Path
