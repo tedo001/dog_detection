@@ -1,20 +1,23 @@
+# Dog Aggression Defense System Requirements
+
 # Core dependencies
-ultralytics==8.0.0
-opencv-python==4.8.0.74
-numpy==1.24.3
-torch==2.0.0
-torchvision==0.15.0
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
 
-# Utility
-pillow==10.0.0
-pyyaml==6.0
-matplotlib==3.7.1
-seaborn==0.12.2
+# Optional audio for ultrasound simulation (choose one)
+simpleaudio>=1.0.4  # Recommended for cross-platform audio
+# pyaudio>=0.2.11   # Alternative for advanced audio control
 
-# Audio for simulation
-pyaudio==0.2.12
-simpleaudio==1.0.4
+# Utilities
+PyYAML>=6.0        # For configuration files
 
-# Development
-ipython==8.14.0
-tqdm==4.65.0
+# Training dependencies (optional, only if training models)
+torch>=2.0.0       # PyTorch for model training
+torchvision>=0.15.0
+matplotlib>=3.7.0  # For plotting training results
+pandas>=2.0.0      # For data analysis
+
+# Development tools (optional)
+ipython>=8.0.0     # For interactive testing
+jupyter>=1.0.0     # For notebook development
