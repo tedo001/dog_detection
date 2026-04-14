@@ -15,13 +15,6 @@ import random
 from pathlib import Path
 
 import yaml
-import cv2
-import numpy as np
-import torch
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 
 
 def load_config(config_path="config/data.yaml"):
@@ -143,6 +136,8 @@ def crop_detections(data_root, output_dir, class_map=None):
         class_map: Dict mapping class_id -> behavior label
                    e.g. {0: 'non_aggressive', 1: 'aggressive'}
     """
+    import cv2
+
     if class_map is None:
         class_map = {0: "non_aggressive", 1: "aggressive"}
 
@@ -199,44 +194,27 @@ def crop_detections(data_root, output_dir, class_map=None):
     print(f"[prepare] Crops saved to {output_dir}")
 
 
-class DogCropDataset(Dataset):
-    """
-    PyTorch Dataset for classifier training.
-    Loads cropped dog images organized in class folders.
-    """
+def _make_dataset(root_dir, split="train", transform=None):
+    """Build a list of (image_path, label) samples from class folders."""
+    root = Path(root_dir) / split
+    classes = sorted([d.name for d in root.iterdir() if d.is_dir()])
+    class_to_idx = {c: i for i, c in enumerate(classes)}
 
-    def __init__(self, root_dir, split="train", transform=None):
-        self.root_dir = Path(root_dir) / split
-        self.transform = transform
-        self.classes = sorted([
-            d.name for d in self.root_dir.iterdir() if d.is_dir()
-        ])
-        self.class_to_idx = {c: i for i, c in enumerate(self.classes)}
+    samples = []
+    for cls_name in classes:
+        cls_dir = root / cls_name
+        for img_path in cls_dir.iterdir():
+            if img_path.suffix.lower() in (".jpg", ".jpeg", ".png"):
+                samples.append((str(img_path), class_to_idx[cls_name]))
 
-        self.samples = []
-        for cls_name in self.classes:
-            cls_dir = self.root_dir / cls_name
-            for img_path in cls_dir.iterdir():
-                if img_path.suffix.lower() in (".jpg", ".jpeg", ".png"):
-                    self.samples.append((str(img_path), self.class_to_idx[cls_name]))
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        img_path, label = self.samples[idx]
-        image = cv2.imread(img_path)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-        if self.transform:
-            augmented = self.transform(image=image)
-            image = augmented["image"]
-
-        return image, label
+    return samples, classes, class_to_idx, transform
 
 
 def get_train_transforms(crop_size=224):
     """Augmentation pipeline for training."""
+    import albumentations as A
+    from albumentations.pytorch import ToTensorV2
+
     return A.Compose([
         A.Resize(crop_size, crop_size),
         A.HorizontalFlip(p=0.5),
@@ -252,6 +230,9 @@ def get_train_transforms(crop_size=224):
 
 def get_val_transforms(crop_size=224):
     """Minimal transforms for validation/test."""
+    import albumentations as A
+    from albumentations.pytorch import ToTensorV2
+
     return A.Compose([
         A.Resize(crop_size, crop_size),
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -261,6 +242,32 @@ def get_val_transforms(crop_size=224):
 
 def get_dataloaders(crop_dir, batch_size=32, crop_size=224, num_workers=4):
     """Create train/val/test DataLoaders."""
+    import cv2
+    import torch
+    from torch.utils.data import Dataset, DataLoader
+
+    class DogCropDataset(Dataset):
+        """PyTorch Dataset for classifier training."""
+
+        def __init__(self, root_dir, split="train", transform=None):
+            self.samples, self.classes, self.class_to_idx, _ = \
+                _make_dataset(root_dir, split)
+            self.transform = transform
+
+        def __len__(self):
+            return len(self.samples)
+
+        def __getitem__(self, idx):
+            img_path, label = self.samples[idx]
+            image = cv2.imread(img_path)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+            if self.transform:
+                augmented = self.transform(image=image)
+                image = augmented["image"]
+
+            return image, label
+
     train_ds = DogCropDataset(
         crop_dir, split="train", transform=get_train_transforms(crop_size)
     )
