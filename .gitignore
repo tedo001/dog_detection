@@ -1,0 +1,30 @@
+# Data (large files - keep on local machine)
+data/raw/
+data/processed/
+*.pt
+!config/*.yaml
+
+# Experiment outputs
+experiments/
+runs/
+*.onnx
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
