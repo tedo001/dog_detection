@@ -6,7 +6,7 @@ opencv-python>=4.8.0
 numpy>=1.24.0
 
 # Optional audio for ultrasound simulation (choose one)
-simpleaudio>=1.0.4  # Recommended for cross-platform audio
+# Recommended for cross-platform audio
 # pyaudio>=0.2.11   # Alternative for advanced audio control
 
 # Utilities
