@@ -1,0 +1,34 @@
+# Dog Aggression Detection - Dataset Configuration
+# Compatible with Roboflow-exported YOLO format
+#
+# Expected dataset structure:
+#   dog_cnn/
+#   ├── train/
+#   │   ├── images/    (training images)
+#   │   └── labels/    (YOLO-format .txt annotations)
+#   ├── valid/
+#   │   ├── images/
+#   │   └── labels/
+#   ├── test/
+#   │   ├── images/
+#   │   └── labels/
+#   └── data.yaml      (Roboflow config - overridden by this file)
+
+# --- Paths (update to your local dataset location) ---
+path: D:/dog_cnn
+train: train/images
+val: valid/images
+test: test/images
+
+# --- Class Definitions ---
+# Stage 1: Dog Detection (YOLO)
+nc: 2
+names:
+  0: dog
+  1: aggressive_dog
+
+# --- Behavior Labels (Stage 2: Classifier) ---
+# These are mapped from bounding-box annotations
+behavior_classes:
+  0: non_aggressive
+  1: aggressive

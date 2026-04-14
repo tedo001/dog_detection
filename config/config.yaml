@@ -1,0 +1,65 @@
+# Dog Aggression Detection - Master Configuration
+# All tunable values in one place — no magic numbers in code
+
+project:
+  name: dog_aggression_detection
+  seed: 42
+  device: auto  # auto, cpu, cuda:0, cuda:1
+
+data:
+  dataset_config: config/data.yaml
+  image_size: 640          # detector input resolution
+  crop_size: 224           # classifier input resolution
+  train_split: 0.70
+  val_split: 0.15
+  test_split: 0.15
+
+detector:
+  model: yolov8n.pt        # base model (nano = fast)
+  epochs: 50
+  batch_size: 16
+  lr: 0.01
+  optimizer: SGD
+  momentum: 0.937
+  weight_decay: 0.0005
+  freeze_backbone_epochs: 10
+  patience: 10             # early stopping patience
+  augment: true
+  mosaic: 1.0
+  mixup: 0.1
+  conf_threshold: 0.5
+  iou_threshold: 0.45
+
+classifier:
+  model: resnet18           # resnet18, resnet34, mobilenet_v3_small
+  pretrained: true
+  epochs: 30
+  batch_size: 32
+  lr: 0.001
+  optimizer: AdamW
+  weight_decay: 0.01
+  scheduler: cosine         # cosine, step, plateau
+  class_weights: [1.0, 3.0] # upweight aggressive (minority) class
+  patience: 7
+  dropout: 0.3
+
+inference:
+  detection_conf: 0.5
+  aggression_threshold: 0.7
+  max_detections: 20
+  nms_iou: 0.45
+
+# AI Training Agent Configuration
+agent:
+  enabled: true
+  max_experiments: 20
+  time_budget_minutes: 10    # per experiment
+  improvement_threshold: 0.005
+  search_strategy: explore   # explore, exploit, adaptive
+  # Hyperparameter search ranges
+  search_space:
+    lr: [0.0001, 0.1]
+    batch_size: [8, 16, 32, 64]
+    dropout: [0.1, 0.2, 0.3, 0.5]
+    optimizer: [AdamW, SGD, Adam]
+    weight_decay: [0.0001, 0.001, 0.01]
