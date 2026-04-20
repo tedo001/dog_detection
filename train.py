@@ -182,6 +182,7 @@ def main():
         run_prepare(config)
         run_detector(config)
         run_classifier(config)
+
     elif args.stage == "prepare":
         run_prepare(config)
     elif args.stage == "detector":
