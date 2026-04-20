@@ -240,33 +240,53 @@ def get_val_transforms(crop_size=224):
     ])
 
 
-def get_dataloaders(crop_dir, batch_size=32, crop_size=224, num_workers=4):
+import platform as _platform
+
+# On Windows, multiprocessing with spawn can't pickle local classes
+_DEFAULT_WORKERS = 0 if _platform.system() == "Windows" else 4
+
+
+class DogCropDataset:
+    """
+    PyTorch Dataset for classifier training.
+    Loads cropped dog images organized in class folders.
+    Inherits from torch Dataset at runtime to keep top-level imports lazy.
+    """
+    _base_set = False
+
+    def __init__(self, root_dir, split="train", transform=None):
+        if not DogCropDataset._base_set:
+            from torch.utils.data import Dataset
+            DogCropDataset.__bases__ = (Dataset,)
+            DogCropDataset._base_set = True
+            Dataset.__init__(self)
+
+        self.samples, self.classes, self.class_to_idx, _ = \
+            _make_dataset(root_dir, split)
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        import cv2
+        img_path, label = self.samples[idx]
+        image = cv2.imread(img_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        if self.transform:
+            augmented = self.transform(image=image)
+            image = augmented["image"]
+
+        return image, label
+
+
+def get_dataloaders(crop_dir, batch_size=32, crop_size=224, num_workers=None):
     """Create train/val/test DataLoaders."""
-    import cv2
-    import torch
-    from torch.utils.data import Dataset, DataLoader
+    from torch.utils.data import DataLoader
 
-    class DogCropDataset(Dataset):
-        """PyTorch Dataset for classifier training."""
-
-        def __init__(self, root_dir, split="train", transform=None):
-            self.samples, self.classes, self.class_to_idx, _ = \
-                _make_dataset(root_dir, split)
-            self.transform = transform
-
-        def __len__(self):
-            return len(self.samples)
-
-        def __getitem__(self, idx):
-            img_path, label = self.samples[idx]
-            image = cv2.imread(img_path)
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-            if self.transform:
-                augmented = self.transform(image=image)
-                image = augmented["image"]
-
-            return image, label
+    if num_workers is None:
+        num_workers = _DEFAULT_WORKERS
 
     train_ds = DogCropDataset(
         crop_dir, split="train", transform=get_train_transforms(crop_size)
