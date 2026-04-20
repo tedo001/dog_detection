@@ -2,7 +2,9 @@
 Stage 2: Aggression Classifier Training
 
 Trains a binary classifier on cropped dog images.
-Supports:
+Features:
+- Live training graph (loss, accuracy, F1 update in real-time)
+- Progress bar with percentage per epoch
 - Transfer learning with backbone freezing
 - Weighted loss for class imbalance
 - Learning rate scheduling
@@ -11,12 +13,14 @@ Supports:
 """
 
 import os
+import sys
 import json
 import time
 from pathlib import Path
 from datetime import datetime
 
 import yaml
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import AdamW, SGD, Adam
@@ -27,8 +31,135 @@ from src.data.prepare import get_dataloaders
 from src.training.callbacks import EarlyStopping, MetricsLogger
 
 
+class LiveTrainingPlot:
+    """Real-time training graph using matplotlib."""
+
+    def __init__(self, save_dir):
+        import matplotlib
+        matplotlib.use("TkAgg")
+        import matplotlib.pyplot as plt
+
+        self.plt = plt
+        self.save_dir = Path(save_dir)
+        self.fig, self.axes = plt.subplots(2, 2, figsize=(14, 9))
+        self.fig.suptitle("Dog Aggression Classifier — Live Training", fontsize=14, fontweight="bold")
+        self.fig.set_facecolor("#1e1e1e")
+
+        for ax in self.axes.flat:
+            ax.set_facecolor("#252525")
+            ax.tick_params(colors="#cccccc")
+            ax.xaxis.label.set_color("#cccccc")
+            ax.yaxis.label.set_color("#cccccc")
+            ax.title.set_color("#ffffff")
+            for spine in ax.spines.values():
+                spine.set_color("#444444")
+
+        self.history = {
+            "train_loss": [], "val_loss": [],
+            "train_acc": [], "val_acc": [],
+            "val_f1": [], "val_precision": [], "val_recall": [],
+            "lr": [],
+        }
+
+        plt.ion()
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        plt.show(block=False)
+
+    def update(self, epoch_data):
+        """Update all 4 graphs with new epoch data."""
+        for key in self.history:
+            if key in epoch_data:
+                self.history[key].append(epoch_data[key])
+
+        epochs = list(range(1, len(self.history["train_loss"]) + 1))
+
+        # Top-left: Loss
+        ax = self.axes[0, 0]
+        ax.clear()
+        ax.plot(epochs, self.history["train_loss"], "o-", color="#3b82f6", label="Train Loss", linewidth=2, markersize=4)
+        ax.plot(epochs, self.history["val_loss"], "o-", color="#ef4444", label="Val Loss", linewidth=2, markersize=4)
+        ax.set_title("Loss")
+        ax.set_xlabel("Epoch")
+        ax.legend(facecolor="#333333", edgecolor="#555555", labelcolor="#cccccc")
+        ax.grid(True, alpha=0.2)
+
+        # Top-right: Accuracy
+        ax = self.axes[0, 1]
+        ax.clear()
+        ax.plot(epochs, self.history["train_acc"], "o-", color="#3b82f6", label="Train Acc", linewidth=2, markersize=4)
+        ax.plot(epochs, self.history["val_acc"], "o-", color="#22c55e", label="Val Acc", linewidth=2, markersize=4)
+        ax.set_title("Accuracy")
+        ax.set_xlabel("Epoch")
+        ax.set_ylim(0, 1.05)
+        ax.legend(facecolor="#333333", edgecolor="#555555", labelcolor="#cccccc")
+        ax.grid(True, alpha=0.2)
+
+        # Bottom-left: F1 / Precision / Recall
+        ax = self.axes[1, 0]
+        ax.clear()
+        ax.plot(epochs, self.history["val_f1"], "o-", color="#f59e0b", label="F1", linewidth=2, markersize=4)
+        ax.plot(epochs, self.history["val_precision"], "s--", color="#8b5cf6", label="Precision", linewidth=1.5, markersize=3)
+        ax.plot(epochs, self.history["val_recall"], "^--", color="#ec4899", label="Recall", linewidth=1.5, markersize=3)
+        ax.set_title("Validation Metrics")
+        ax.set_xlabel("Epoch")
+        ax.set_ylim(0, 1.05)
+        ax.legend(facecolor="#333333", edgecolor="#555555", labelcolor="#cccccc")
+        ax.grid(True, alpha=0.2)
+
+        # Bottom-right: Learning Rate
+        ax = self.axes[1, 1]
+        ax.clear()
+        ax.plot(epochs, self.history["lr"], "o-", color="#06b6d4", label="LR", linewidth=2, markersize=4)
+        ax.set_title("Learning Rate Schedule")
+        ax.set_xlabel("Epoch")
+        ax.legend(facecolor="#333333", edgecolor="#555555", labelcolor="#cccccc")
+        ax.grid(True, alpha=0.2)
+        ax.ticklabel_format(style="sci", axis="y", scilimits=(0, 0))
+
+        # Style
+        for ax in self.axes.flat:
+            ax.set_facecolor("#252525")
+            ax.tick_params(colors="#cccccc")
+            ax.title.set_color("#ffffff")
+            for spine in ax.spines.values():
+                spine.set_color("#444444")
+
+        self.fig.suptitle("Dog Aggression Classifier — Live Training", fontsize=14, fontweight="bold", color="#ffffff")
+        self.plt.tight_layout(rect=[0, 0, 1, 0.95])
+        self.plt.draw()
+        self.plt.pause(0.1)
+
+        # Save graph
+        self.fig.savefig(
+            self.save_dir / "training_graph.png",
+            facecolor="#1e1e1e", dpi=150, bbox_inches="tight"
+        )
+
+    def close(self):
+        self.plt.ioff()
+        self.plt.close()
+
+
+def print_progress_bar(epoch, total_epochs, train_loss, val_loss, val_f1, elapsed):
+    """Print a progress bar with percentage."""
+    pct = (epoch / total_epochs) * 100
+    bar_len = 30
+    filled = int(bar_len * epoch / total_epochs)
+    bar = "█" * filled + "░" * (bar_len - filled)
+
+    eta = (elapsed / epoch) * (total_epochs - epoch) if epoch > 0 else 0
+
+    sys.stdout.write(
+        f"\r  [{bar}] {pct:5.1f}% | "
+        f"Epoch {epoch}/{total_epochs} | "
+        f"Loss: {train_loss:.4f}/{val_loss:.4f} | "
+        f"F1: {val_f1:.4f} | "
+        f"ETA: {eta:.0f}s  "
+    )
+    sys.stdout.flush()
+
+
 def get_optimizer(model, cfg):
-    """Create optimizer from config."""
     name = cfg.get("optimizer", "AdamW")
     lr = cfg["lr"]
     wd = cfg.get("weight_decay", 0.01)
@@ -44,7 +175,6 @@ def get_optimizer(model, cfg):
 
 
 def get_scheduler(optimizer, cfg, total_steps):
-    """Create LR scheduler from config."""
     name = cfg.get("scheduler", "cosine")
 
     if name == "cosine":
@@ -58,13 +188,13 @@ def get_scheduler(optimizer, cfg, total_steps):
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
-    """Train for one epoch. Returns average loss and accuracy."""
     model.train()
     total_loss = 0.0
     correct = 0
     total = 0
+    batch_count = len(loader)
 
-    for images, labels in loader:
+    for i, (images, labels) in enumerate(loader):
         images = images.to(device)
         labels = labels.to(device)
 
@@ -79,13 +209,18 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         correct += (predicted == labels).sum().item()
         total += labels.size(0)
 
+        # Mini progress for batches
+        batch_pct = (i + 1) / batch_count * 100
+        sys.stdout.write(f"\r    Batch {i+1}/{batch_count} ({batch_pct:.0f}%)")
+        sys.stdout.flush()
+
+    sys.stdout.write("\r" + " " * 60 + "\r")
     avg_loss = total_loss / total
     accuracy = correct / total
     return avg_loss, accuracy
 
 
 def validate(model, loader, criterion, device):
-    """Validate model. Returns loss, accuracy, and per-class metrics."""
     model.eval()
     total_loss = 0.0
     correct = 0
@@ -112,8 +247,6 @@ def validate(model, loader, criterion, device):
     avg_loss = total_loss / total
     accuracy = correct / total
 
-    # Compute F1 for aggressive class (class 1)
-    import numpy as np
     preds = np.array(all_preds)
     labels_arr = np.array(all_labels)
 
@@ -125,45 +258,39 @@ def validate(model, loader, criterion, device):
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
-    return avg_loss, accuracy, {"precision": precision, "recall": recall, "f1": f1}
+    return avg_loss, accuracy, {"precision": float(precision), "recall": float(recall), "f1": float(f1)}
 
 
 def train_classifier(config):
     """
-    Train the aggression classifier end-to-end.
-
-    Args:
-        config: Dict from config/config.yaml
-
-    Returns:
-        Dict with training results and metrics
+    Train the aggression classifier with live graphs and progress tracking.
     """
     cls_cfg = config["classifier"]
     data_cfg = config["data"]
 
-    # Device setup
     device_str = config["project"].get("device", "auto")
     if device_str == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device_str)
 
-    # Create experiment directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"classifier_{timestamp}"
     run_dir = Path("experiments") / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "checkpoints").mkdir(exist_ok=True)
 
-    print("\n" + "=" * 50)
+    print("\n" + "=" * 60)
     print("  STAGE 2: TRAINING AGGRESSION CLASSIFIER")
-    print("=" * 50)
+    print("=" * 60)
     print(f"  Backbone:   {cls_cfg['model']}")
     print(f"  Epochs:     {cls_cfg['epochs']}")
     print(f"  Batch size: {cls_cfg['batch_size']}")
     print(f"  LR:         {cls_cfg['lr']}")
     print(f"  Device:     {device}")
-    print("=" * 50 + "\n")
+    print(f"  GPU:        {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A'}")
+    print(f"  Output:     {run_dir}")
+    print("=" * 60 + "\n")
 
     # Data
     data_root = config.get("data", {}).get("dataset_config", "config/data.yaml")
@@ -176,6 +303,10 @@ def train_classifier(config):
         batch_size=cls_cfg["batch_size"],
         crop_size=data_cfg.get("crop_size", 224),
     )
+
+    print(f"  Train samples: {len(train_loader.dataset)}")
+    print(f"  Val samples:   {len(val_loader.dataset)}")
+    print()
 
     # Model
     model = AggressionClassifier(
@@ -202,11 +333,26 @@ def train_classifier(config):
     with open(run_dir / "config.yaml", "w") as f:
         yaml.dump(config, f)
 
+    # Live graph
+    live_plot = None
+    try:
+        live_plot = LiveTrainingPlot(save_dir=run_dir)
+        print("  Live training graph opened.\n")
+    except Exception:
+        print("  (Live graph not available — training in headless mode)\n")
+
     # Training loop
     start_time = time.time()
     best_f1 = 0.0
+    total_epochs = cls_cfg["epochs"]
 
-    for epoch in range(cls_cfg["epochs"]):
+    print(f"  {'Epoch':>5} | {'Train Loss':>10} {'Train Acc':>10} | "
+          f"{'Val Loss':>10} {'Val F1':>8} {'Recall':>8} | {'LR':>10} | Status")
+    print("  " + "-" * 88)
+
+    for epoch in range(total_epochs):
+        epoch_start = time.time()
+
         train_loss, train_acc = train_one_epoch(
             model, train_loader, criterion, optimizer, device
         )
@@ -214,7 +360,6 @@ def train_classifier(config):
             model, val_loader, criterion, device
         )
 
-        # Update scheduler
         if scheduler:
             if isinstance(scheduler, ReduceLROnPlateau):
                 scheduler.step(val_metrics["f1"])
@@ -222,8 +367,8 @@ def train_classifier(config):
                 scheduler.step()
 
         current_lr = optimizer.param_groups[0]["lr"]
+        elapsed = time.time() - start_time
 
-        # Log
         epoch_data = {
             "epoch": epoch + 1,
             "train_loss": train_loss,
@@ -237,27 +382,49 @@ def train_classifier(config):
         }
         logger.log(epoch_data)
 
-        print(
-            f"  Epoch {epoch+1:3d}/{cls_cfg['epochs']} | "
-            f"Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | "
-            f"Val Loss: {val_loss:.4f} F1: {val_metrics['f1']:.4f} "
-            f"Recall: {val_metrics['recall']:.4f}"
-        )
+        # Progress bar
+        pct = ((epoch + 1) / total_epochs) * 100
+        eta = (elapsed / (epoch + 1)) * (total_epochs - epoch - 1)
 
-        # Save best model
+        status = ""
         if val_metrics["f1"] > best_f1:
             best_f1 = val_metrics["f1"]
             model.save(run_dir / "checkpoints" / "best.pt")
-            print(f"  >> New best F1: {best_f1:.4f} — model saved")
+            status = "*** BEST ***"
+
+        print(
+            f"  {epoch+1:3d}/{total_epochs} | "
+            f"{train_loss:10.4f} {train_acc:10.4f} | "
+            f"{val_loss:10.4f} {val_metrics['f1']:8.4f} {val_metrics['recall']:8.4f} | "
+            f"{current_lr:10.6f} | {status}"
+        )
+
+        # Progress bar
+        bar_len = 40
+        filled = int(bar_len * (epoch + 1) / total_epochs)
+        bar = "█" * filled + "░" * (bar_len - filled)
+        print(f"  [{bar}] {pct:.1f}%  |  ETA: {eta:.0f}s  |  Best F1: {best_f1:.4f}")
+
+        # Update live graph
+        if live_plot:
+            try:
+                live_plot.update(epoch_data)
+            except Exception:
+                pass
 
         # Early stopping
         if early_stopping.step(val_metrics["f1"]):
-            print(f"\n  Early stopping at epoch {epoch+1}")
+            print(f"\n  Early stopping triggered at epoch {epoch+1}")
             break
 
     training_time = time.time() - start_time
 
-    # Final metrics
+    if live_plot:
+        try:
+            live_plot.close()
+        except Exception:
+            pass
+
     final_metrics = {
         "best_f1": best_f1,
         "final_val_acc": val_acc,
@@ -272,15 +439,17 @@ def train_classifier(config):
     with open(run_dir / "metrics.json", "w") as f:
         json.dump(final_metrics, f, indent=2)
 
-    print("\n" + "=" * 50)
+    print("\n" + "=" * 60)
     print("  CLASSIFIER TRAINING COMPLETE")
-    print("=" * 50)
+    print("=" * 60)
     print(f"  Best F1:    {best_f1:.4f}")
     print(f"  Recall:     {val_metrics['recall']:.4f}")
     print(f"  Precision:  {val_metrics['precision']:.4f}")
+    print(f"  Epochs:     {epoch+1}/{total_epochs}")
     print(f"  Time:       {training_time:.0f}s")
-    print(f"  Saved to:   {run_dir}")
-    print("=" * 50 + "\n")
+    print(f"  Graph:      {run_dir}/training_graph.png")
+    print(f"  Weights:    {run_dir}/checkpoints/best.pt")
+    print("=" * 60 + "\n")
 
     return final_metrics
 

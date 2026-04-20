@@ -459,17 +459,22 @@ class DogAggressionApp:
             messagebox.showerror(
                 "Missing Model",
                 f"Detector weights not found:\n{self.detector_path.get()}\n\n"
-                "Train the model first:\n  python train.py --stage detector"
+                "Use 'yolov8n.pt' for pretrained detection\n"
+                "or train with: python train.py --stage detector"
             )
             return
 
-        if not Path(self.classifier_path.get()).exists():
-            messagebox.showerror(
-                "Missing Model",
-                f"Classifier weights not found:\n{self.classifier_path.get()}\n\n"
-                "Train the model first:\n  python train.py --stage classifier"
+        cls_path = self.classifier_path.get()
+        has_classifier = cls_path and Path(cls_path).exists()
+        if not has_classifier:
+            proceed = messagebox.askyesno(
+                "No Classifier",
+                "Classifier weights not found — running in DETECTION-ONLY mode.\n"
+                "Dogs will be detected but aggression won't be classified.\n\n"
+                "Continue?",
             )
-            return
+            if not proceed:
+                return
 
         self.is_processing = True
         self.stop_requested = False
@@ -496,9 +501,14 @@ class DogAggressionApp:
             self._update_status("Loading models...")
 
             from src.inference.predict import DogAggressionPipeline
+
+            cls_path = self.classifier_path.get()
+            if not cls_path or not Path(cls_path).exists():
+                cls_path = None
+
             pipeline = DogAggressionPipeline(
                 detector_path=self.detector_path.get(),
-                classifier_path=self.classifier_path.get(),
+                classifier_path=cls_path,
                 det_conf=self.det_conf.get(),
                 aggression_threshold=self.aggression_threshold.get(),
             )

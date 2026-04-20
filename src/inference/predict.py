@@ -1,13 +1,14 @@
 """
 End-to-End Inference Pipeline
 
-Detect dogs → Classify aggression → Alert
+Detect dogs → Classify aggression (if classifier available) → Alert
 
 Supports:
 - Single image
 - Directory of images
 - Video file
 - Webcam stream
+- Detection-only mode (no classifier needed)
 """
 
 import cv2
@@ -16,92 +17,151 @@ import numpy as np
 from pathlib import Path
 
 from src.models.detector import DogDetector
-from src.models.classifier import AggressionClassifier
-from src.data.prepare import get_val_transforms
+
+
+# COCO class ID for 'dog' — used when running with pretrained YOLO
+COCO_DOG_CLASS_ID = 16
 
 
 class DogAggressionPipeline:
     """
     Full inference pipeline: detect dogs, classify aggression, visualize.
+    Works in two modes:
+    - Full mode: detector + classifier (after training)
+    - Detection-only mode: just detector (works with pretrained yolov8n.pt)
     """
 
     COLORS = {
         "non_aggressive": (0, 255, 0),   # green
         "aggressive": (0, 0, 255),        # red
+        "detected": (0, 200, 255),        # yellow (detection only)
     }
     BEHAVIOR_NAMES = {0: "non_aggressive", 1: "aggressive"}
 
-    def __init__(self, detector_path, classifier_path,
+    def __init__(self, detector_path, classifier_path=None,
                  det_conf=0.5, aggression_threshold=0.7,
                  crop_size=224, device="auto"):
-        # Device
         if device == "auto":
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
 
-        # Load models
+        # Load detector
         self.detector = DogDetector(model_path=detector_path, conf=det_conf)
-        self.classifier = AggressionClassifier.load(classifier_path, device=str(self.device))
-        self.classifier.eval()
 
-        self.aggression_threshold = aggression_threshold
-        self.transform = get_val_transforms(crop_size)
+        # Determine if this is a COCO-pretrained model (filters for dog class)
+        self.coco_mode = self._is_coco_model()
 
-        print(f"[pipeline] Loaded on {self.device}")
+        # Try loading classifier (optional)
+        self.classifier = None
+        self.has_classifier = False
+        self.transform = None
+
+        if classifier_path and Path(classifier_path).exists():
+            try:
+                from src.models.classifier import AggressionClassifier
+                self.classifier = AggressionClassifier.load(
+                    classifier_path, device=str(self.device)
+                )
+                self.classifier.eval()
+                self.has_classifier = True
+
+                from src.data.prepare import get_val_transforms
+                self.transform = get_val_transforms(crop_size)
+                print(f"[pipeline] Classifier loaded from {classifier_path}")
+            except Exception as e:
+                print(f"[pipeline] Classifier not available ({e}) — detection-only mode")
+
+        mode = "full (detect + classify)" if self.has_classifier else "detection-only"
+        print(f"[pipeline] Mode: {mode}")
+        print(f"[pipeline] Device: {self.device}")
         print(f"[pipeline] Detection conf: {det_conf}")
-        print(f"[pipeline] Aggression threshold: {aggression_threshold}")
+        if self.has_classifier:
+            print(f"[pipeline] Aggression threshold: {aggression_threshold}")
+        self.aggression_threshold = aggression_threshold
+
+    def _is_coco_model(self):
+        """Check if detector is using COCO class names (pretrained model)."""
+        names = self.detector.model.names
+        return len(names) > 16 and names.get(16, "") == "dog"
 
     def process_frame(self, frame):
         """
         Process a single frame/image.
 
-        Args:
-            frame: BGR numpy array (from cv2)
-
         Returns:
-            List of dicts: [{x1, y1, x2, y2, dog_conf, behavior, behavior_conf}]
+            List of dicts: [{x1, y1, x2, y2, dog_conf, behavior, behavior_conf, alert}]
         """
-        detections = self.detector.get_dog_boxes(frame)
-        results = []
+        # Get all detections
+        results = self.detector.predict(frame)
+        detections = []
 
-        for det in detections:
-            crop = frame[det["y1"]:det["y2"], det["x1"]:det["x2"]]
-            if crop.size == 0:
+        for result in results:
+            if result.boxes is None:
                 continue
+            for box in result.boxes:
+                cls_id = int(box.cls[0])
+                conf = float(box.conf[0])
 
-            crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-            augmented = self.transform(image=crop_rgb)
-            tensor = augmented["image"].unsqueeze(0).to(self.device)
+                # In COCO mode, only keep dog detections (class 16)
+                if self.coco_mode and cls_id != COCO_DOG_CLASS_ID:
+                    continue
 
-            cls_id, conf = self.classifier.predict_single(tensor)
-            behavior = self.BEHAVIOR_NAMES[cls_id]
+                det = {
+                    "x1": int(box.xyxy[0][0]),
+                    "y1": int(box.xyxy[0][1]),
+                    "x2": int(box.xyxy[0][2]),
+                    "y2": int(box.xyxy[0][3]),
+                    "confidence": conf,
+                    "class_id": cls_id,
+                }
+                detections.append(det)
 
-            # Apply aggression threshold
-            is_aggressive = (cls_id == 1 and conf >= self.aggression_threshold)
-
-            results.append({
+        # Classify each detection
+        output = []
+        for det in detections:
+            result_entry = {
                 "x1": det["x1"],
                 "y1": det["y1"],
                 "x2": det["x2"],
                 "y2": det["y2"],
                 "dog_confidence": det["confidence"],
-                "behavior": "aggressive" if is_aggressive else "non_aggressive",
-                "behavior_confidence": conf,
-                "alert": is_aggressive,
-            })
+            }
 
-        return results
+            if self.has_classifier:
+                crop = frame[det["y1"]:det["y2"], det["x1"]:det["x2"]]
+                if crop.size == 0:
+                    continue
+
+                crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                augmented = self.transform(image=crop_rgb)
+                tensor = augmented["image"].unsqueeze(0).to(self.device)
+
+                cls_id, conf = self.classifier.predict_single(tensor)
+                behavior = self.BEHAVIOR_NAMES[cls_id]
+                is_aggressive = (cls_id == 1 and conf >= self.aggression_threshold)
+
+                result_entry["behavior"] = "aggressive" if is_aggressive else "non_aggressive"
+                result_entry["behavior_confidence"] = conf
+                result_entry["alert"] = is_aggressive
+            else:
+                # Detection-only mode
+                result_entry["behavior"] = "detected"
+                result_entry["behavior_confidence"] = det["confidence"]
+                result_entry["alert"] = False
+
+            output.append(result_entry)
+
+        return output
 
     def draw_results(self, frame, results):
         """Draw bounding boxes and labels on frame."""
         annotated = frame.copy()
 
         for r in results:
-            color = self.COLORS[r["behavior"]]
-            thickness = 3 if r["alert"] else 2
+            color = self.COLORS.get(r["behavior"], (0, 200, 255))
+            thickness = 3 if r.get("alert") else 2
 
-            # Bounding box
             cv2.rectangle(
                 annotated,
                 (r["x1"], r["y1"]),
@@ -109,10 +169,12 @@ class DogAggressionPipeline:
                 color, thickness,
             )
 
-            # Label
-            label = f"{r['behavior']} {r['behavior_confidence']:.2f}"
-            if r["alert"]:
-                label = "ALERT: " + label
+            if r["behavior"] == "detected":
+                label = f"DOG {r['behavior_confidence']:.2f}"
+            else:
+                label = f"{r['behavior']} {r['behavior_confidence']:.2f}"
+                if r.get("alert"):
+                    label = "ALERT: " + label
 
             label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
             cv2.rectangle(
@@ -131,7 +193,6 @@ class DogAggressionPipeline:
         return annotated
 
     def predict_image(self, image_path, save_path=None):
-        """Run prediction on a single image."""
         frame = cv2.imread(str(image_path))
         if frame is None:
             raise FileNotFoundError(f"Cannot read image: {image_path}")
@@ -146,7 +207,6 @@ class DogAggressionPipeline:
         return results, annotated
 
     def predict_video(self, video_path, output_path=None):
-        """Run prediction on a video file."""
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             raise FileNotFoundError(f"Cannot open video: {video_path}")
@@ -171,10 +231,10 @@ class DogAggressionPipeline:
             results = self.process_frame(frame)
             annotated = self.draw_results(frame, results)
 
-            alerts = [r for r in results if r["alert"]]
+            alerts = [r for r in results if r.get("alert")]
             if alerts:
                 alert_count += 1
-                print(f"  Frame {frame_count}: {len(alerts)} AGGRESSIVE dog(s) detected!")
+                print(f"  Frame {frame_count}: {len(alerts)} AGGRESSIVE dog(s)!")
 
             if writer:
                 writer.write(annotated)
@@ -187,7 +247,6 @@ class DogAggressionPipeline:
         print(f"\n[pipeline] Processed {frame_count} frames, {alert_count} alert frames")
 
     def predict_webcam(self):
-        """Run real-time prediction from webcam."""
         cap = cv2.VideoCapture(0)
         print("[pipeline] Press 'q' to quit webcam")
 
@@ -211,14 +270,10 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Dog Aggression Detection")
-    parser.add_argument("--source", type=str, required=True,
-                        help="Image path, video path, or 'webcam'")
-    parser.add_argument("--detector", type=str, required=True,
-                        help="Path to detector weights (best.pt)")
-    parser.add_argument("--classifier", type=str, required=True,
-                        help="Path to classifier weights (best.pt)")
-    parser.add_argument("--output", type=str, default=None,
-                        help="Output path for annotated result")
+    parser.add_argument("--source", type=str, required=True)
+    parser.add_argument("--detector", type=str, required=True)
+    parser.add_argument("--classifier", type=str, default=None)
+    parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--conf", type=float, default=0.5)
     parser.add_argument("--threshold", type=float, default=0.7)
     args = parser.parse_args()
