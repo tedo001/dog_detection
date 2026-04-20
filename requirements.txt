@@ -20,3 +20,7 @@ numpy>=1.24.0
 matplotlib>=3.7.0
 pandas>=2.0.0
 tqdm>=4.65.0
+
+# GUI Application
+Pillow>=10.0.0
+# Note: tkinter is part of Python standard library - no install needed
