@@ -248,19 +248,11 @@ _DEFAULT_WORKERS = 0 if _platform.system() == "Windows" else 4
 
 class DogCropDataset:
     """
-    PyTorch Dataset for classifier training.
-    Loads cropped dog images organized in class folders.
-    Inherits from torch Dataset at runtime to keep top-level imports lazy.
+    PyTorch-compatible Dataset for classifier training.
+    DataLoader only needs __len__ and __getitem__ — no inheritance required.
     """
-    _base_set = False
 
     def __init__(self, root_dir, split="train", transform=None):
-        if not DogCropDataset._base_set:
-            from torch.utils.data import Dataset
-            DogCropDataset.__bases__ = (Dataset,)
-            DogCropDataset._base_set = True
-            Dataset.__init__(self)
-
         self.samples, self.classes, self.class_to_idx, _ = \
             _make_dataset(root_dir, split)
         self.transform = transform
