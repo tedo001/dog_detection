@@ -1,11 +1,12 @@
 """
-Dog Detector Module - YOLOv8 Wrapper
+Detector - Stock COCO-pretrained YOLO11 wrapper.
 
-Handles:
-- Loading pretrained YOLOv8 model
-- Fine-tuning on dog-specific dataset
-- Running inference with post-processing
-- Exporting to ONNX for deployment
+Uses ultralytics YOLO out-of-the-box (no fine-tuning required). The COCO
+model already distinguishes:
+    - class 0  : person
+    - class 16 : dog
+
+This solves the human-as-dog confusion that a dog-only fine-tuned model has.
 """
 
 from pathlib import Path
@@ -13,119 +14,73 @@ from pathlib import Path
 from ultralytics import YOLO
 
 
-class DogDetector:
-    """YOLOv8-based dog detector with fine-tuning support."""
+COCO_PERSON = 0
+COCO_DOG = 16
 
-    def __init__(self, model_path="yolov8n.pt", conf=0.5, iou=0.45):
+
+class DogDetector:
+    """Thin wrapper around ultralytics YOLO that exposes persons + dogs."""
+
+    def __init__(self, model_path="yolo11m.pt", conf=0.35, iou=0.45):
         self.model = YOLO(model_path)
         self.conf = conf
         self.iou = iou
 
-    def train(self, data_yaml, epochs=50, batch_size=16, lr=0.01,
-              imgsz=640, patience=10, freeze_layers=0,
-              project="experiments", name="detector", **kwargs):
+    def detect(self, frame):
         """
-        Fine-tune YOLOv8 on dog detection dataset.
-
-        Args:
-            data_yaml: Path to data.yaml config
-            epochs: Number of training epochs
-            batch_size: Batch size
-            lr: Initial learning rate
-            imgsz: Input image size
-            patience: Early stopping patience
-            freeze_layers: Number of backbone layers to freeze
-            project: Experiment output directory
-            name: Run name
-        """
-        results = self.model.train(
-            data=data_yaml,
-            epochs=epochs,
-            batch=batch_size,
-            lr0=lr,
-            imgsz=imgsz,
-            patience=patience,
-            freeze=freeze_layers,
-            project=project,
-            name=name,
-            save=True,
-            save_period=5,
-            plots=True,
-            verbose=True,
-            **kwargs,
-        )
-        return results
-
-    def predict(self, source, conf=None, iou=None, save=False):
-        """
-        Run detection on image/video/directory.
-
-        Args:
-            source: Image path, video path, directory, or numpy array
-            conf: Confidence threshold (uses default if None)
-            iou: NMS IoU threshold (uses default if None)
-            save: Whether to save annotated results
+        Run detection on a single BGR frame.
 
         Returns:
-            List of Results objects with boxes, confidence, class info
+            dict with keys "persons" and "dogs", each a list of
+            {x1, y1, x2, y2, confidence}
         """
         results = self.model.predict(
-            source=source,
-            conf=conf or self.conf,
-            iou=iou or self.iou,
-            save=save,
+            source=frame,
+            conf=self.conf,
+            iou=self.iou,
+            classes=[COCO_PERSON, COCO_DOG],
             verbose=False,
         )
-        return results
 
-    def get_dog_boxes(self, image):
-        """
-        Get bounding boxes for detected dogs.
-
-        Returns:
-            List of dicts: [{x1, y1, x2, y2, confidence, class_id, class_name}]
-        """
-        results = self.predict(image)
-        detections = []
+        persons = []
+        dogs = []
 
         for result in results:
             if result.boxes is None:
                 continue
             for box in result.boxes:
+                cls_id = int(box.cls[0])
                 det = {
                     "x1": int(box.xyxy[0][0]),
                     "y1": int(box.xyxy[0][1]),
                     "x2": int(box.xyxy[0][2]),
                     "y2": int(box.xyxy[0][3]),
                     "confidence": float(box.conf[0]),
-                    "class_id": int(box.cls[0]),
-                    "class_name": result.names[int(box.cls[0])],
                 }
-                detections.append(det)
+                if cls_id == COCO_PERSON:
+                    persons.append(det)
+                elif cls_id == COCO_DOG:
+                    dogs.append(det)
 
-        return detections
+        return {"persons": persons, "dogs": dogs}
 
-    def validate(self, data_yaml=None):
-        """Run validation and return metrics."""
-        metrics = self.model.val(data=data_yaml, verbose=True)
-        return {
-            "mAP50": float(metrics.box.map50),
-            "mAP50_95": float(metrics.box.map),
-            "precision": float(metrics.box.mp),
-            "recall": float(metrics.box.mr),
-        }
+    # Back-compat: used by older evaluation code
+    def get_dog_boxes(self, frame):
+        return self.detect(frame)["dogs"]
 
-    def export(self, format="onnx", imgsz=640):
-        """Export model for deployment."""
-        path = self.model.export(format=format, imgsz=imgsz)
-        print(f"[detector] Model exported to: {path}")
-        return path
+    def train(self, data_yaml, epochs=50, batch_size=16, lr=0.01,
+              imgsz=640, patience=10, freeze_layers=0,
+              project="experiments", name="detector", **kwargs):
+        """Fine-tune on a custom dataset (optional; stock weights work fine)."""
+        return self.model.train(
+            data=data_yaml, epochs=epochs, batch=batch_size, lr0=lr,
+            imgsz=imgsz, patience=patience, freeze=freeze_layers,
+            project=project, name=name, save=True, plots=True,
+            verbose=True, **kwargs,
+        )
 
     def load_best(self, run_dir):
-        """Load the best checkpoint from a training run."""
         best_path = Path(run_dir) / "weights" / "best.pt"
-        if best_path.exists():
-            self.model = YOLO(str(best_path))
-            print(f"[detector] Loaded best model from {best_path}")
-        else:
-            raise FileNotFoundError(f"No best.pt found at {best_path}")
+        if not best_path.exists():
+            raise FileNotFoundError(f"No best.pt at {best_path}")
+        self.model = YOLO(str(best_path))
