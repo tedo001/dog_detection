@@ -183,7 +183,10 @@ def crop_detections(data_root, output_dir, class_map=None):
                         continue
 
                     crop = img[y1:y2, x1:x2]
-                    label = class_map.get(cls_id, "unknown")
+                    label = class_map.get(cls_id)
+
+                    if label is None:
+                        continue
 
                     save_dir = output_dir / split / label
                     save_dir.mkdir(parents=True, exist_ok=True)

@@ -304,21 +304,29 @@ def train_classifier(config):
         crop_size=data_cfg.get("crop_size", 224),
     )
 
+    # Auto-detect classes from the dataset
+    train_classes = train_loader.dataset.classes
+    num_classes = len(train_classes)
+
     print(f"  Train samples: {len(train_loader.dataset)}")
     print(f"  Val samples:   {len(val_loader.dataset)}")
+    print(f"  Classes ({num_classes}): {train_classes}")
     print()
 
     # Model
     model = AggressionClassifier(
         backbone=cls_cfg["model"],
-        num_classes=2,
+        num_classes=num_classes,
         pretrained=cls_cfg.get("pretrained", True),
         dropout=cls_cfg.get("dropout", 0.3),
     ).to(device)
 
-    # Loss with class weights
-    weights = cls_cfg.get("class_weights", [1.0, 3.0])
-    class_weights = torch.tensor(weights, dtype=torch.float32).to(device)
+    # Loss with class weights — auto-pad if config has fewer weights than classes
+    configured_weights = cls_cfg.get("class_weights", [1.0, 3.0])
+    while len(configured_weights) < num_classes:
+        configured_weights.append(1.0)
+    class_weights = torch.tensor(configured_weights[:num_classes], dtype=torch.float32).to(device)
+    print(f"  Class weights: {class_weights.tolist()}")
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     # Optimizer & scheduler
