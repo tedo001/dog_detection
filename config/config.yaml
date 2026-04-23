@@ -45,12 +45,12 @@ classifier:
 
 inference:
   detection_conf: 0.35
-  risk_threshold: 0.6       # geometric risk score (0-1)
+  risk_threshold: 0.45      # geometric risk score (0-1)
   max_detections: 20
   nms_iou: 0.45
   pose_model: yolo11m-pose.pt  # set to null to disable pose features
-  smoothing_alpha: 0.35     # EMA weight for new frame (lower = smoother)
-  sustain_frames: 5         # must be above threshold for this many frames
+  smoothing_alpha: 0.5      # EMA weight for new frame (lower = smoother)
+  sustain_frames: 3         # must be above threshold for this many frames
   cooldown_frames: 30       # suppress repeat alerts for same dog
 
 # AI Training Agent Configuration

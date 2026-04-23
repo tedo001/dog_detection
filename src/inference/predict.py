@@ -209,7 +209,7 @@ def _compute_risk(track, persons, frame_shape, num_dogs):
 
     # 1. Distance
     distance = math.hypot(dog_cx - p_cx, dog_cy - p_cy) / diag
-    distance_risk = max(0.0, 1.0 - distance / 0.15)
+    distance_risk = max(0.0, 1.0 - distance / 0.30)
 
     # 2. Velocity toward person
     velocity_risk = 0.0
@@ -220,7 +220,7 @@ def _compute_risk(track, persons, frame_shape, num_dogs):
         p_len = math.hypot(pdx, pdy) + 1e-6
         pdx, pdy = pdx / p_len, pdy / p_len
         velocity_toward = (dx * pdx + dy * pdy) / diag
-        velocity_risk = min(1.0, max(0.0, velocity_toward / 0.03))
+        velocity_risk = min(1.0, max(0.0, velocity_toward / 0.02))
 
     # 3. Posture change (box aspect ratio variance over last 5 frames)
     posture_risk = 0.0
@@ -277,9 +277,9 @@ class DogAggressionPipeline:
     ]
 
     def __init__(self, detector_path="yolo11m.pt", pose_model="yolo11m-pose.pt",
-                 classifier_path=None, det_conf=0.35, risk_threshold=0.6,
-                 aggression_threshold=None, smoothing_alpha=0.35,
-                 sustain_frames=5, cooldown_frames=30,
+                 classifier_path=None, det_conf=0.35, risk_threshold=0.45,
+                 aggression_threshold=None, smoothing_alpha=0.5,
+                 sustain_frames=3, cooldown_frames=30,
                  crop_size=224, device="auto"):
         if aggression_threshold is not None:
             risk_threshold = aggression_threshold
@@ -518,8 +518,8 @@ if __name__ == "__main__":
     p.add_argument("--pose", type=str, default="yolo11m-pose.pt")
     p.add_argument("--output", type=str, default=None)
     p.add_argument("--conf", type=float, default=0.35)
-    p.add_argument("--risk", type=float, default=0.6)
-    p.add_argument("--sustain", type=int, default=5)
+    p.add_argument("--risk", type=float, default=0.45)
+    p.add_argument("--sustain", type=int, default=3)
     p.add_argument("--cooldown", type=int, default=30)
     args = p.parse_args()
 

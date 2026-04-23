@@ -45,8 +45,8 @@ class DogAggressionApp:
         self.detector_path = tk.StringVar(value="yolo11m.pt")
         self.pose_enabled = tk.BooleanVar(value=True)
         self.det_conf = tk.DoubleVar(value=0.35)
-        self.risk_threshold = tk.DoubleVar(value=0.6)
-        self.sustain_frames = tk.IntVar(value=5)
+        self.risk_threshold = tk.DoubleVar(value=0.45)
+        self.sustain_frames = tk.IntVar(value=3)
         self.skip_frames = tk.IntVar(value=1)
         self.save_output = tk.BooleanVar(value=True)
 
