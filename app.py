@@ -43,8 +43,10 @@ class DogAggressionApp:
 
         # Settings
         self.detector_path = tk.StringVar(value="yolo11m.pt")
+        self.pose_enabled = tk.BooleanVar(value=True)
         self.det_conf = tk.DoubleVar(value=0.35)
         self.risk_threshold = tk.DoubleVar(value=0.6)
+        self.sustain_frames = tk.IntVar(value=5)
         self.skip_frames = tk.IntVar(value=1)
         self.save_output = tk.BooleanVar(value=True)
 
@@ -147,13 +149,23 @@ class DogAggressionApp:
             bg="#1e1e1e", fg="#ffffff", insertbackground="white",
             relief="flat", font=("Segoe UI", 9),
         )
-        det_entry.pack(fill="x", padx=15, pady=(0, 15))
+        det_entry.pack(fill="x", padx=15, pady=(0, 8))
+
+        tk.Checkbutton(
+            parent, text="Use pose model (human skeleton)",
+            variable=self.pose_enabled,
+            bg="#252525", fg="#cccccc",
+            selectcolor="#1e1e1e",
+            activebackground="#252525", activeforeground="white",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=15, pady=(0, 15))
 
         # Settings
         self._section_header(parent, "3. Settings")
 
         self._slider(parent, "Detection confidence", self.det_conf, 0.1, 0.95, 0.05)
         self._slider(parent, "Risk threshold", self.risk_threshold, 0.1, 0.95, 0.05)
+        self._slider(parent, "Sustain frames (N)", self.sustain_frames, 1, 20, 1, is_int=True)
         self._slider(parent, "Skip frames", self.skip_frames, 1, 30, 1, is_int=True)
 
         tk.Checkbutton(
@@ -460,10 +472,13 @@ class DogAggressionApp:
 
             from src.inference.predict import DogAggressionPipeline
 
+            pose_model = "yolo11m-pose.pt" if self.pose_enabled.get() else None
             pipeline = DogAggressionPipeline(
                 detector_path=self.detector_path.get(),
+                pose_model=pose_model,
                 det_conf=self.det_conf.get(),
                 risk_threshold=self.risk_threshold.get(),
+                sustain_frames=self.sustain_frames.get(),
             )
 
             self._update_status("Processing video...")
@@ -513,25 +528,27 @@ class DogAggressionApp:
                 total_persons += n_persons
                 total_dogs += n_dogs
 
-                alerts_now = [r for r in results if r["alert"]]
-                total_alerts += len(alerts_now)
+                new_alerts_now = [r for r in results if r.get("new_alert")]
+                total_alerts += len(new_alerts_now)
 
-                if alerts_now:
+                if new_alerts_now:
                     timestamp_s = frame_count / fps
-                    for a in alerts_now:
+                    for a in new_alerts_now:
                         f = a.get("features", {})
                         entry = {
                             "time": f"{int(timestamp_s//60):02d}:{int(timestamp_s%60):02d}",
                             "frame": frame_count,
+                            "track_id": a["track_id"],
                             "risk": round(a["risk"], 3),
                             "features": f,
                         }
                         self.alerts.append(entry)
                         self.log(
-                            f"[{entry['time']}] ALERT dog#{a['track_id']} "
+                            f"[{entry['time']}] SUSTAINED dog#{a['track_id']} "
                             f"risk={a['risk']:.2f} "
                             f"(dist={f.get('distance',0)} vel={f.get('velocity',0)} "
-                            f"post={f.get('posture',0)}) frame {frame_count}"
+                            f"post={f.get('posture',0)} pose={f.get('human_pose',0)}) "
+                            f"frame {frame_count}"
                         )
 
                 if writer:

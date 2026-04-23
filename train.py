@@ -136,10 +136,15 @@ def run_predict(config, source, output=None):
         "risk_threshold", config["inference"].get("aggression_threshold", 0.6)
     )
 
+    inf = config["inference"]
     pipeline = DogAggressionPipeline(
         detector_path=detector_path,
-        det_conf=config["inference"]["detection_conf"],
+        pose_model=inf.get("pose_model", "yolo11m-pose.pt"),
+        det_conf=inf["detection_conf"],
         risk_threshold=risk_threshold,
+        smoothing_alpha=inf.get("smoothing_alpha", 0.35),
+        sustain_frames=inf.get("sustain_frames", 5),
+        cooldown_frames=inf.get("cooldown_frames", 30),
     )
 
     if source == "webcam":
