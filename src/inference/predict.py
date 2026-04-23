@@ -181,10 +181,10 @@ def compute_pose_features(person):
 def _compute_risk(track, persons, frame_shape, num_dogs):
     """
     Interpretable risk score in [0, 1]. Weights:
-        0.40 distance    - closer dog-to-person
-        0.25 velocity    - dog moving toward person
-        0.15 posture     - dog aspect-ratio change (lunging)
-        0.10 human pose  - defensive posture (arms up / crouched)
+        0.55 distance    - closer dog-to-person (dominant signal)
+        0.20 velocity    - dog moving toward person
+        0.10 posture     - dog aspect-ratio change (lunging)
+        0.05 human pose  - defensive posture (arms up / crouched)
         + 0.10 pack bonus when multiple dogs
     """
     features = {
@@ -207,27 +207,27 @@ def _compute_risk(track, persons, frame_shape, num_dogs):
     )
     p_cx, p_cy = _box_center(nearest)
 
-    # 1. Distance
+    # 1. Distance — 50% of diagonal range so dogs anywhere nearby score
     distance = math.hypot(dog_cx - p_cx, dog_cy - p_cy) / diag
-    distance_risk = max(0.0, 1.0 - distance / 0.30)
+    distance_risk = max(0.0, 1.0 - distance / 0.50)
 
     # 2. Velocity toward person
     velocity_risk = 0.0
-    if len(track.box_history) >= 5:
-        old_cx, old_cy = _box_center(track.box_history[-5])
+    if len(track.box_history) >= 3:
+        old_cx, old_cy = _box_center(track.box_history[-3])
         dx, dy = dog_cx - old_cx, dog_cy - old_cy
         pdx, pdy = p_cx - old_cx, p_cy - old_cy
         p_len = math.hypot(pdx, pdy) + 1e-6
         pdx, pdy = pdx / p_len, pdy / p_len
         velocity_toward = (dx * pdx + dy * pdy) / diag
-        velocity_risk = min(1.0, max(0.0, velocity_toward / 0.02))
+        velocity_risk = min(1.0, max(0.0, velocity_toward / 0.015))
 
     # 3. Posture change (box aspect ratio variance over last 5 frames)
     posture_risk = 0.0
-    if len(track.box_history) >= 5:
+    if len(track.box_history) >= 3:
         recent_ars = [_box_aspect_ratio(b) for b in list(track.box_history)[-5:]]
         ar_range = max(recent_ars) - min(recent_ars)
-        posture_risk = min(1.0, ar_range / 0.6)
+        posture_risk = min(1.0, ar_range / 0.4)
 
     # 4. Human pose (defensive / bracing) from nearest person
     pose = compute_pose_features(nearest)
@@ -237,10 +237,10 @@ def _compute_risk(track, persons, frame_shape, num_dogs):
     pack_bonus = 0.1 if num_dogs > 1 else 0.0
 
     risk = (
-        0.40 * distance_risk
-        + 0.25 * velocity_risk
-        + 0.15 * posture_risk
-        + 0.10 * pose_risk
+        0.55 * distance_risk
+        + 0.20 * velocity_risk
+        + 0.10 * posture_risk
+        + 0.05 * pose_risk
         + pack_bonus
     )
 
@@ -277,9 +277,9 @@ class DogAggressionPipeline:
     ]
 
     def __init__(self, detector_path="yolo11m.pt", pose_model="yolo11m-pose.pt",
-                 classifier_path=None, det_conf=0.35, risk_threshold=0.45,
-                 aggression_threshold=None, smoothing_alpha=0.5,
-                 sustain_frames=3, cooldown_frames=30,
+                 classifier_path=None, det_conf=0.35, risk_threshold=0.35,
+                 aggression_threshold=None, smoothing_alpha=0.6,
+                 sustain_frames=2, cooldown_frames=30,
                  crop_size=224, device="auto"):
         if aggression_threshold is not None:
             risk_threshold = aggression_threshold
@@ -518,8 +518,8 @@ if __name__ == "__main__":
     p.add_argument("--pose", type=str, default="yolo11m-pose.pt")
     p.add_argument("--output", type=str, default=None)
     p.add_argument("--conf", type=float, default=0.35)
-    p.add_argument("--risk", type=float, default=0.45)
-    p.add_argument("--sustain", type=int, default=3)
+    p.add_argument("--risk", type=float, default=0.35)
+    p.add_argument("--sustain", type=int, default=2)
     p.add_argument("--cooldown", type=int, default=30)
     args = p.parse_args()
 

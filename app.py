@@ -45,8 +45,8 @@ class DogAggressionApp:
         self.detector_path = tk.StringVar(value="yolo11m.pt")
         self.pose_enabled = tk.BooleanVar(value=True)
         self.det_conf = tk.DoubleVar(value=0.35)
-        self.risk_threshold = tk.DoubleVar(value=0.45)
-        self.sustain_frames = tk.IntVar(value=3)
+        self.risk_threshold = tk.DoubleVar(value=0.35)
+        self.sustain_frames = tk.IntVar(value=2)
         self.skip_frames = tk.IntVar(value=1)
         self.save_output = tk.BooleanVar(value=True)
 
@@ -544,12 +544,13 @@ class DogAggressionApp:
                         }
                         self.alerts.append(entry)
                         self.log(
-                            f"[{entry['time']}] SUSTAINED dog#{a['track_id']} "
+                            f"[{entry['time']}] ALERT dog#{a['track_id']} "
                             f"risk={a['risk']:.2f} "
                             f"(dist={f.get('distance',0)} vel={f.get('velocity',0)} "
                             f"post={f.get('posture',0)} pose={f.get('human_pose',0)}) "
                             f"frame {frame_count}"
                         )
+                    self.root.after(0, self.root.bell)
 
                 if writer:
                     writer.write(annotated)
