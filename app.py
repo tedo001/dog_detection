@@ -80,10 +80,32 @@ class DogAggressionApp:
         main_frame = tk.Frame(self.root, bg="#1e1e1e")
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Left: Controls
-        left_frame = tk.Frame(main_frame, bg="#252525", width=360)
-        left_frame.pack(side="left", fill="y", padx=(0, 10))
-        left_frame.pack_propagate(False)
+        # Left: Controls (scrollable)
+        left_outer = tk.Frame(main_frame, bg="#252525", width=380)
+        left_outer.pack(side="left", fill="y", padx=(0, 10))
+        left_outer.pack_propagate(False)
+
+        canvas = tk.Canvas(left_outer, bg="#252525", highlightthickness=0, width=360)
+        scrollbar = ttk.Scrollbar(left_outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        left_frame = tk.Frame(canvas, bg="#252525")
+        canvas_window = canvas.create_window((0, 0), window=left_frame, anchor="nw")
+
+        def _on_frame_configure(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        left_frame.bind("<Configure>", _on_frame_configure)
+
+        def _on_canvas_configure(e):
+            canvas.itemconfig(canvas_window, width=e.width)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        def _on_mousewheel(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
         # Right: Video Display + Alerts
         right_frame = tk.Frame(main_frame, bg="#1e1e1e")
