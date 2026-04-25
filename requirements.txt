@@ -23,4 +23,3 @@ tqdm>=4.65.0
 
 # GUI Application
 Pillow>=10.0.0
-# Note: tkinter is part of Python standard library - no install needed

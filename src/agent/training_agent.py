@@ -30,8 +30,12 @@ class ExperimentTracker:
     Persists to JSON for full experiment history.
     """
 
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
     def __init__(self, log_path="experiments/experiment_log.json"):
         self.log_path = Path(log_path)
+        if not self.log_path.is_absolute():
+            self.log_path = self.PROJECT_ROOT / self.log_path
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.experiments = self._load()
 
@@ -236,7 +240,12 @@ class TrainingAgent:
     5. Adapt strategy and repeat
     """
 
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
     def __init__(self, config_path="config/config.yaml"):
+        config_path = Path(config_path)
+        if not config_path.is_absolute():
+            config_path = self.PROJECT_ROOT / config_path
         with open(config_path, "r") as f:
             self.base_config = yaml.safe_load(f)
 

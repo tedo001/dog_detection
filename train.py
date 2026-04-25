@@ -9,7 +9,6 @@ Usage:
     python train.py --stage prepare
     python train.py --stage detector
     python train.py --stage classifier
-
     # AI Agent mode (auto-tune hyperparameters)
     python train.py --stage agent
     python train.py --stage agent --max-experiments 10
@@ -126,32 +125,36 @@ def run_evaluate(config):
 
 
 def run_predict(config, source, output=None):
-    """Run inference on image/video."""
+    """Run inference on image/video using geometric risk rules."""
     from src.inference.predict import DogAggressionPipeline
 
     detector_path = config.get("inference", {}).get(
-        "detector_path", "experiments/detector_best/weights/best.pt"
+        "detector_path", config["detector"]["model"]
     )
-    classifier_path = config.get("inference", {}).get(
-        "classifier_path", "experiments/classifier_best/checkpoints/best.pt"
+    risk_threshold = config["inference"].get(
+        "risk_threshold", config["inference"].get("aggression_threshold", 0.6)
     )
 
+    inf = config["inference"]
     pipeline = DogAggressionPipeline(
         detector_path=detector_path,
-        classifier_path=classifier_path,
-        det_conf=config["inference"]["detection_conf"],
-        aggression_threshold=config["inference"]["aggression_threshold"],
+        pose_model=inf.get("pose_model", "yolo11m-pose.pt"),
+        det_conf=inf["detection_conf"],
+        risk_threshold=risk_threshold,
+        smoothing_alpha=inf.get("smoothing_alpha", 0.35),
+        sustain_frames=inf.get("sustain_frames", 5),
+        cooldown_frames=inf.get("cooldown_frames", 30),
     )
 
     if source == "webcam":
         pipeline.predict_webcam()
-    elif source.endswith((".mp4", ".avi", ".mov")):
+    elif source.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
         pipeline.predict_video(source, output_path=output)
     else:
         results, _ = pipeline.predict_image(source, save_path=output)
         for r in results:
-            status = "AGGRESSIVE" if r["alert"] else "safe"
-            print(f"  Dog: {status} (confidence: {r['behavior_confidence']:.2f})")
+            status = "ALERT" if r["alert"] else "safe"
+            print(f"  Dog#{r['track_id']}: {status} (risk: {r['risk']:.2f})")
 
 
 def main():

@@ -15,7 +15,7 @@ data:
   test_split: 0.15
 
 detector:
-  model: yolov8n.pt        # base model (nano = fast)
+  model: yolo11m.pt         # COCO-pretrained (person=0, dog=16)
   epochs: 50
   batch_size: 16
   lr: 0.01
@@ -23,11 +23,11 @@ detector:
   momentum: 0.937
   weight_decay: 0.0005
   freeze_backbone_epochs: 10
-  patience: 10             # early stopping patience
+  patience: 10
   augment: true
   mosaic: 1.0
   mixup: 0.1
-  conf_threshold: 0.5
+  conf_threshold: 0.35
   iou_threshold: 0.45
 
 classifier:
@@ -44,10 +44,14 @@ classifier:
   dropout: 0.3
 
 inference:
-  detection_conf: 0.5
-  aggression_threshold: 0.7
+  detection_conf: 0.35
+  risk_threshold: 0.35      # geometric risk score (0-1)
   max_detections: 20
   nms_iou: 0.45
+  pose_model: yolo11m-pose.pt  # set to null to disable pose features
+  smoothing_alpha: 0.6      # EMA weight for new frame (lower = smoother)
+  sustain_frames: 2         # must be above threshold for this many frames
+  cooldown_frames: 30       # suppress repeat alerts for same dog
 
 # AI Training Agent Configuration
 agent:

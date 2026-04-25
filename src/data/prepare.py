@@ -10,11 +10,17 @@ Handles:
 """
 
 import os
+import platform as _platform
 import shutil
 import random
 from pathlib import Path
 
 import yaml
+
+
+# On Windows, multiprocessing with spawn can't pickle local classes;
+# DataLoader workers stay at 0 there.
+_DEFAULT_WORKERS = 0 if _platform.system() == "Windows" else 4
 
 
 def load_config(config_path="config/data.yaml"):
@@ -125,18 +131,65 @@ def create_splits(data_root, train_ratio=0.70, val_ratio=0.15, seed=42):
     print(f"[prepare] Split complete: {counts}")
 
 
-def crop_detections(data_root, output_dir, class_map=None):
+def _crop_one_image(args):
+    """Worker: crop all boxes from a single image. Returns count saved."""
+    import cv2
+
+    img_path, lbl_path, split_out_dir, class_map = args
+
+    if not lbl_path.exists():
+        return 0
+
+    img = cv2.imread(str(img_path))
+    if img is None:
+        return 0
+    h, w = img.shape[:2]
+
+    saved = 0
+    with open(lbl_path, "r") as f:
+        lines = f.readlines()
+
+    for i, line in enumerate(lines):
+        parts = line.strip().split()
+        if len(parts) < 5:
+            continue
+
+        cls_id = int(parts[0])
+        label = class_map.get(cls_id)
+        if label is None:
+            continue
+
+        cx, cy, bw, bh = map(float, parts[1:5])
+        x1 = max(0, int((cx - bw / 2) * w))
+        y1 = max(0, int((cy - bh / 2) * h))
+        x2 = min(w, int((cx + bw / 2) * w))
+        y2 = min(h, int((cy + bh / 2) * h))
+
+        if x2 - x1 < 10 or y2 - y1 < 10:
+            continue
+
+        crop = img[y1:y2, x1:x2]
+        save_path = split_out_dir / label / f"{img_path.stem}_crop{i}.jpg"
+        cv2.imwrite(str(save_path), crop)
+        saved += 1
+
+    return saved
+
+
+def crop_detections(data_root, output_dir, class_map=None, num_workers=None):
     """
-    Crop dog bounding boxes from images using YOLO labels.
-    Organizes crops into class folders for classifier training.
+    Crop dog bounding boxes from YOLO labels into per-class folders.
+    Shows a tqdm progress bar and uses a process pool for speed.
 
     Args:
         data_root: Path to dataset root
         output_dir: Where to save cropped images
         class_map: Dict mapping class_id -> behavior label
                    e.g. {0: 'non_aggressive', 1: 'aggressive'}
+        num_workers: Parallel workers (default: min(8, cpu_count))
     """
-    import cv2
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from tqdm import tqdm
 
     if class_map is None:
         class_map = {0: "non_aggressive", 1: "aggressive"}
@@ -144,62 +197,67 @@ def crop_detections(data_root, output_dir, class_map=None):
     data_root = Path(data_root)
     output_dir = Path(output_dir)
 
+    if num_workers is None:
+        num_workers = min(8, os.cpu_count() or 4)
+    # On Windows, ProcessPoolExecutor + spawn has heavy startup cost and
+    # can't easily pickle nested state — run serial, it's plenty fast.
+    if _platform.system() == "Windows":
+        num_workers = 1
+
+    # Pre-create every split/class directory so DogCropDataset can load even
+    # splits that end up with 0 samples of a given class.
+    for split in ["train", "valid", "test"]:
+        for label in class_map.values():
+            (output_dir / split / label).mkdir(parents=True, exist_ok=True)
+
+    total_saved = 0
     for split in ["train", "valid", "test"]:
         img_dir = data_root / split / "images"
         lbl_dir = data_root / split / "labels"
+        split_out_dir = output_dir / split
 
         if not img_dir.exists():
+            print(f"[prepare] Skipping {split} (no images dir)")
             continue
 
-        for img_path in img_dir.iterdir():
-            if img_path.suffix.lower() not in (".jpg", ".jpeg", ".png"):
-                continue
+        images = [
+            p for p in img_dir.iterdir()
+            if p.suffix.lower() in (".jpg", ".jpeg", ".png")
+        ]
+        if not images:
+            print(f"[prepare] {split}: 0 images, skipping")
+            continue
 
-            lbl_path = lbl_dir / f"{img_path.stem}.txt"
-            if not lbl_path.exists():
-                continue
+        tasks = [
+            (img_path, lbl_dir / f"{img_path.stem}.txt", split_out_dir, class_map)
+            for img_path in images
+        ]
 
-            img = cv2.imread(str(img_path))
-            if img is None:
-                continue
-            h, w = img.shape[:2]
+        split_saved = 0
+        desc = f"[crop] {split:<5}"
 
-            with open(lbl_path, "r") as f:
-                for i, line in enumerate(f.readlines()):
-                    parts = line.strip().split()
-                    if len(parts) < 5:
-                        continue
+        if num_workers <= 1:
+            for t in tqdm(tasks, desc=desc, unit="img"):
+                split_saved += _crop_one_image(t)
+        else:
+            with ProcessPoolExecutor(max_workers=num_workers) as pool:
+                futures = [pool.submit(_crop_one_image, t) for t in tasks]
+                for fut in tqdm(as_completed(futures), total=len(futures),
+                                desc=desc, unit="img"):
+                    split_saved += fut.result()
 
-                    cls_id = int(parts[0])
-                    cx, cy, bw, bh = map(float, parts[1:5])
+        print(f"[prepare] {split}: {split_saved} crops saved")
+        total_saved += split_saved
 
-                    # Convert YOLO normalized coords to pixel coords
-                    x1 = max(0, int((cx - bw / 2) * w))
-                    y1 = max(0, int((cy - bh / 2) * h))
-                    x2 = min(w, int((cx + bw / 2) * w))
-                    y2 = min(h, int((cy + bh / 2) * h))
-
-                    if x2 - x1 < 10 or y2 - y1 < 10:
-                        continue
-
-                    crop = img[y1:y2, x1:x2]
-                    label = class_map.get(cls_id)
-
-                    if label is None:
-                        continue
-
-                    save_dir = output_dir / split / label
-                    save_dir.mkdir(parents=True, exist_ok=True)
-
-                    save_path = save_dir / f"{img_path.stem}_crop{i}.jpg"
-                    cv2.imwrite(str(save_path), crop)
-
-    print(f"[prepare] Crops saved to {output_dir}")
+    print(f"[prepare] Done. {total_saved} total crops -> {output_dir}")
 
 
 def _make_dataset(root_dir, split="train", transform=None):
     """Build a list of (image_path, label) samples from class folders."""
     root = Path(root_dir) / split
+    if not root.exists():
+        return [], [], {}, transform
+
     classes = sorted([d.name for d in root.iterdir() if d.is_dir()])
     class_to_idx = {c: i for i, c in enumerate(classes)}
 
@@ -243,12 +301,6 @@ def get_val_transforms(crop_size=224):
     ])
 
 
-import platform as _platform
-
-# On Windows, multiprocessing with spawn can't pickle local classes
-_DEFAULT_WORKERS = 0 if _platform.system() == "Windows" else 4
-
-
 class DogCropDataset:
     """
     PyTorch-compatible Dataset for classifier training.
@@ -277,7 +329,7 @@ class DogCropDataset:
 
 
 def get_dataloaders(crop_dir, batch_size=32, crop_size=224, num_workers=None):
-    """Create train/val/test DataLoaders."""
+    """Create train/val DataLoaders."""
     from torch.utils.data import DataLoader
 
     if num_workers is None:

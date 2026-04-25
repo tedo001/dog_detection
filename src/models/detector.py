@@ -1,11 +1,11 @@
 """
-Dog Detector Module - YOLOv8 Wrapper
+Detector - Stock COCO-pretrained YOLO11 wrapper.
 
-Handles:
-- Loading pretrained YOLOv8 model
-- Fine-tuning on dog-specific dataset
-- Running inference with post-processing
-- Exporting to ONNX for deployment
+Runs two models in one pass:
+    - yolo11m.pt      -> person + dog bounding boxes (COCO classes 0 and 16)
+    - yolo11m-pose.pt -> human keypoints (17 COCO joints) for posture features
+
+Pose is optional; set pose_model=None to skip and save compute.
 """
 
 from pathlib import Path
@@ -13,119 +13,130 @@ from pathlib import Path
 from ultralytics import YOLO
 
 
-class DogDetector:
-    """YOLOv8-based dog detector with fine-tuning support."""
+COCO_PERSON = 0
+COCO_DOG = 16
 
-    def __init__(self, model_path="yolov8n.pt", conf=0.5, iou=0.45):
+# COCO keypoint indices (17-joint standard)
+KP_NOSE = 0
+KP_L_SHOULDER, KP_R_SHOULDER = 5, 6
+KP_L_ELBOW, KP_R_ELBOW = 7, 8
+KP_L_WRIST, KP_R_WRIST = 9, 10
+KP_L_HIP, KP_R_HIP = 11, 12
+KP_L_KNEE, KP_R_KNEE = 13, 14
+KP_L_ANKLE, KP_R_ANKLE = 15, 16
+
+
+class DogDetector:
+    """Ultralytics YOLO wrapper that returns persons (w/ optional pose) + dogs."""
+
+    def __init__(self, model_path="yolo11m.pt", pose_model="yolo11m-pose.pt",
+                 conf=0.35, iou=0.45):
         self.model = YOLO(model_path)
         self.conf = conf
         self.iou = iou
+        self.pose = YOLO(pose_model) if pose_model else None
 
-    def train(self, data_yaml, epochs=50, batch_size=16, lr=0.01,
-              imgsz=640, patience=10, freeze_layers=0,
-              project="experiments", name="detector", **kwargs):
+    def detect(self, frame):
         """
-        Fine-tune YOLOv8 on dog detection dataset.
-
-        Args:
-            data_yaml: Path to data.yaml config
-            epochs: Number of training epochs
-            batch_size: Batch size
-            lr: Initial learning rate
-            imgsz: Input image size
-            patience: Early stopping patience
-            freeze_layers: Number of backbone layers to freeze
-            project: Experiment output directory
-            name: Run name
-        """
-        results = self.model.train(
-            data=data_yaml,
-            epochs=epochs,
-            batch=batch_size,
-            lr0=lr,
-            imgsz=imgsz,
-            patience=patience,
-            freeze=freeze_layers,
-            project=project,
-            name=name,
-            save=True,
-            save_period=5,
-            plots=True,
-            verbose=True,
-            **kwargs,
-        )
-        return results
-
-    def predict(self, source, conf=None, iou=None, save=False):
-        """
-        Run detection on image/video/directory.
-
-        Args:
-            source: Image path, video path, directory, or numpy array
-            conf: Confidence threshold (uses default if None)
-            iou: NMS IoU threshold (uses default if None)
-            save: Whether to save annotated results
+        Run detection (+ pose if enabled) on a single BGR frame.
 
         Returns:
-            List of Results objects with boxes, confidence, class info
+            dict with:
+                persons: list of {x1, y1, x2, y2, confidence, keypoints?}
+                dogs:    list of {x1, y1, x2, y2, confidence}
+            keypoints, when present, is a list of (x, y, visibility) tuples
+            indexed by COCO joint order.
         """
-        results = self.model.predict(
-            source=source,
-            conf=conf or self.conf,
-            iou=iou or self.iou,
-            save=save,
+        # Pass 1: detection (person + dog)
+        det_results = self.model.predict(
+            source=frame,
+            conf=self.conf,
+            iou=self.iou,
+            classes=[COCO_PERSON, COCO_DOG],
             verbose=False,
         )
-        return results
 
-    def get_dog_boxes(self, image):
-        """
-        Get bounding boxes for detected dogs.
-
-        Returns:
-            List of dicts: [{x1, y1, x2, y2, confidence, class_id, class_name}]
-        """
-        results = self.predict(image)
-        detections = []
-
-        for result in results:
+        persons = []
+        dogs = []
+        for result in det_results:
             if result.boxes is None:
                 continue
             for box in result.boxes:
+                cls_id = int(box.cls[0])
                 det = {
                     "x1": int(box.xyxy[0][0]),
                     "y1": int(box.xyxy[0][1]),
                     "x2": int(box.xyxy[0][2]),
                     "y2": int(box.xyxy[0][3]),
                     "confidence": float(box.conf[0]),
-                    "class_id": int(box.cls[0]),
-                    "class_name": result.names[int(box.cls[0])],
                 }
-                detections.append(det)
+                if cls_id == COCO_PERSON:
+                    persons.append(det)
+                elif cls_id == COCO_DOG:
+                    dogs.append(det)
 
-        return detections
+        # Pass 2: pose (only persons). Match keypoints to existing person boxes
+        # by IoU so we keep one canonical person list.
+        if self.pose is not None and persons:
+            pose_results = self.pose.predict(
+                source=frame,
+                conf=self.conf,
+                iou=self.iou,
+                verbose=False,
+            )
+            for result in pose_results:
+                if result.boxes is None or result.keypoints is None:
+                    continue
+                kp_data = result.keypoints.data.cpu().numpy()  # (N, 17, 3)
+                boxes_xyxy = result.boxes.xyxy.cpu().numpy()
+                for i, pbox in enumerate(boxes_xyxy):
+                    pose_box = {
+                        "x1": int(pbox[0]), "y1": int(pbox[1]),
+                        "x2": int(pbox[2]), "y2": int(pbox[3]),
+                    }
+                    best = max(
+                        persons,
+                        key=lambda p: _iou(p, pose_box),
+                        default=None,
+                    )
+                    if best is not None and _iou(best, pose_box) > 0.3:
+                        best["keypoints"] = [
+                            (float(x), float(y), float(v))
+                            for x, y, v in kp_data[i]
+                        ]
 
-    def validate(self, data_yaml=None):
-        """Run validation and return metrics."""
-        metrics = self.model.val(data=data_yaml, verbose=True)
-        return {
-            "mAP50": float(metrics.box.map50),
-            "mAP50_95": float(metrics.box.map),
-            "precision": float(metrics.box.mp),
-            "recall": float(metrics.box.mr),
-        }
+        return {"persons": persons, "dogs": dogs}
 
-    def export(self, format="onnx", imgsz=640):
-        """Export model for deployment."""
-        path = self.model.export(format=format, imgsz=imgsz)
-        print(f"[detector] Model exported to: {path}")
-        return path
+    def get_dog_boxes(self, frame):
+        return self.detect(frame)["dogs"]
+
+    def train(self, data_yaml, epochs=50, batch_size=16, lr=0.01,
+              imgsz=640, patience=10, freeze_layers=0,
+              project="experiments", name="detector", **kwargs):
+        """Fine-tune on a custom dataset (optional; stock weights work fine)."""
+        return self.model.train(
+            data=data_yaml, epochs=epochs, batch=batch_size, lr0=lr,
+            imgsz=imgsz, patience=patience, freeze=freeze_layers,
+            project=project, name=name, save=True, plots=True,
+            verbose=True, **kwargs,
+        )
 
     def load_best(self, run_dir):
-        """Load the best checkpoint from a training run."""
         best_path = Path(run_dir) / "weights" / "best.pt"
-        if best_path.exists():
-            self.model = YOLO(str(best_path))
-            print(f"[detector] Loaded best model from {best_path}")
-        else:
-            raise FileNotFoundError(f"No best.pt found at {best_path}")
+        if not best_path.exists():
+            raise FileNotFoundError(f"No best.pt at {best_path}")
+        self.model = YOLO(str(best_path))
+
+
+def _iou(a, b):
+    ax1, ay1, ax2, ay2 = a["x1"], a["y1"], a["x2"], a["y2"]
+    bx1, by1, bx2, by2 = b["x1"], b["y1"], b["x2"], b["y2"]
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+    inter = iw * ih
+    if inter == 0:
+        return 0.0
+    area_a = (ax2 - ax1) * (ay2 - ay1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    return inter / (area_a + area_b - inter + 1e-6)

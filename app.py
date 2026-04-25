@@ -3,9 +3,9 @@ Dog Aggression Detection - Desktop GUI Application
 
 Native Tkinter-based GUI app that:
 - Browse/select a local video file
-- Runs the full detection + classification pipeline
+- Runs YOLO11 person+dog detection + geometric risk scoring
 - Shows annotated video with bounding boxes in real-time
-- Logs aggression alerts with timestamps
+- Logs aggression risk alerts with timestamps
 - Exports annotated output video
 
 Run with:
@@ -32,37 +32,25 @@ class DogAggressionApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Dog Aggression Detection System")
-        self.root.geometry("1280x820")
+        self.root.geometry("1280x860")
         self.root.configure(bg="#1e1e1e")
 
         # State
         self.video_path = None
-        self.pipeline = None
         self.is_processing = False
         self.stop_requested = False
         self.alerts = []
-        self.frame_queue = Queue(maxsize=10)
 
-        # Default model paths
-        self.detector_path = tk.StringVar(value=self._find_latest_model(
-            "experiments/detector_*/weights/best.pt"
-        ))
-        self.classifier_path = tk.StringVar(value=self._find_latest_model(
-            "experiments/classifier_*/checkpoints/best.pt"
-        ))
-        self.det_conf = tk.DoubleVar(value=0.5)
-        self.aggression_threshold = tk.DoubleVar(value=0.7)
+        # Settings
+        self.detector_path = tk.StringVar(value="yolo11m.pt")
+        self.pose_enabled = tk.BooleanVar(value=True)
+        self.det_conf = tk.DoubleVar(value=0.35)
+        self.risk_threshold = tk.DoubleVar(value=0.35)
+        self.sustain_frames = tk.IntVar(value=2)
         self.skip_frames = tk.IntVar(value=1)
         self.save_output = tk.BooleanVar(value=True)
 
         self._build_ui()
-
-    def _find_latest_model(self, pattern):
-        """Find most recent trained model matching pattern."""
-        candidates = list(Path(".").glob(pattern))
-        if not candidates:
-            return ""
-        return str(max(candidates, key=lambda p: p.stat().st_mtime))
 
     def _build_ui(self):
         """Build the complete GUI layout."""
@@ -82,7 +70,7 @@ class DogAggressionApp:
 
         tk.Label(
             title_frame,
-            text="YOLOv8 + ResNet Two-Stage Pipeline",
+            text="YOLO11 + Geometric Risk Detection",
             font=("Segoe UI", 10),
             bg="#2d2d2d",
             fg="#888888",
@@ -151,10 +139,10 @@ class DogAggressionApp:
             cursor="hand2",
         ).pack(side="left")
 
-        # Model Paths
-        self._section_header(parent, "2. Model Weights")
+        # Detector model
+        self._section_header(parent, "2. Detector Model")
 
-        tk.Label(parent, text="Detector (.pt):", bg="#252525", fg="#cccccc",
+        tk.Label(parent, text="YOLO weights (.pt):", bg="#252525", fg="#cccccc",
                  font=("Segoe UI", 9)).pack(anchor="w", padx=15)
         det_entry = tk.Entry(
             parent, textvariable=self.detector_path,
@@ -163,20 +151,21 @@ class DogAggressionApp:
         )
         det_entry.pack(fill="x", padx=15, pady=(0, 8))
 
-        tk.Label(parent, text="Classifier (.pt):", bg="#252525", fg="#cccccc",
-                 font=("Segoe UI", 9)).pack(anchor="w", padx=15)
-        cls_entry = tk.Entry(
-            parent, textvariable=self.classifier_path,
-            bg="#1e1e1e", fg="#ffffff", insertbackground="white",
-            relief="flat", font=("Segoe UI", 9),
-        )
-        cls_entry.pack(fill="x", padx=15, pady=(0, 15))
+        tk.Checkbutton(
+            parent, text="Use pose model (human skeleton)",
+            variable=self.pose_enabled,
+            bg="#252525", fg="#cccccc",
+            selectcolor="#1e1e1e",
+            activebackground="#252525", activeforeground="white",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=15, pady=(0, 15))
 
         # Settings
         self._section_header(parent, "3. Settings")
 
-        self._slider(parent, "Dog detection confidence", self.det_conf, 0.1, 0.95, 0.05)
-        self._slider(parent, "Aggression threshold", self.aggression_threshold, 0.3, 0.95, 0.05)
+        self._slider(parent, "Detection confidence", self.det_conf, 0.1, 0.95, 0.05)
+        self._slider(parent, "Risk threshold", self.risk_threshold, 0.1, 0.95, 0.05)
+        self._slider(parent, "Sustain frames (N)", self.sustain_frames, 1, 20, 1, is_int=True)
         self._slider(parent, "Skip frames", self.skip_frames, 1, 30, 1, is_int=True)
 
         tk.Checkbutton(
@@ -261,17 +250,19 @@ class DogAggressionApp:
 
         self.stats_vars = {
             "frames": tk.StringVar(value="0"),
+            "persons": tk.StringVar(value="0"),
             "dogs": tk.StringVar(value="0"),
             "alerts": tk.StringVar(value="0"),
             "fps": tk.StringVar(value="0.0"),
         }
 
-        for i, (key, label) in enumerate([
+        for key, label in [
             ("frames", "Frames"),
-            ("dogs", "Dogs Detected"),
-            ("alerts", "AGGRESSIVE"),
+            ("persons", "Persons"),
+            ("dogs", "Dogs"),
+            ("alerts", "ALERTS"),
             ("fps", "FPS"),
-        ]):
+        ]:
             col = tk.Frame(stats_frame, bg="#252525")
             col.pack(side="left", fill="both", expand=True, padx=5, pady=10)
 
@@ -279,7 +270,7 @@ class DogAggressionApp:
             tk.Label(
                 col, textvariable=self.stats_vars[key],
                 bg="#252525", fg=color,
-                font=("Segoe UI", 20, "bold"),
+                font=("Segoe UI", 18, "bold"),
             ).pack()
             tk.Label(
                 col, text=label,
@@ -418,7 +409,7 @@ class DogAggressionApp:
         entry.bind("<Return>", lambda e: submit())
 
     def _set_video(self, path):
-        """Set the current video and show info."""
+        """Set the current video and show first frame."""
         self.video_path = path
         self.path_label.config(text=path, fg="#22c55e")
 
@@ -431,7 +422,7 @@ class DogAggressionApp:
         self.log(f"Video loaded: {path}")
 
     def _display_frame(self, frame):
-        """Display a frame in the video label."""
+        """Display a BGR frame in the video label."""
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         label_w = self.video_label.winfo_width()
@@ -455,27 +446,6 @@ class DogAggressionApp:
             messagebox.showwarning("No Video", "Please select a video first.")
             return
 
-        if not Path(self.detector_path.get()).exists():
-            messagebox.showerror(
-                "Missing Model",
-                f"Detector weights not found:\n{self.detector_path.get()}\n\n"
-                "Use 'yolov8n.pt' for pretrained detection\n"
-                "or train with: python train.py --stage detector"
-            )
-            return
-
-        cls_path = self.classifier_path.get()
-        has_classifier = cls_path and Path(cls_path).exists()
-        if not has_classifier:
-            proceed = messagebox.askyesno(
-                "No Classifier",
-                "Classifier weights not found — running in DETECTION-ONLY mode.\n"
-                "Dogs will be detected but aggression won't be classified.\n\n"
-                "Continue?",
-            )
-            if not proceed:
-                return
-
         self.is_processing = True
         self.stop_requested = False
         self.alerts = []
@@ -498,19 +468,17 @@ class DogAggressionApp:
     def _detection_worker(self):
         """Background thread that processes the video."""
         try:
-            self._update_status("Loading models...")
+            self._update_status("Loading YOLO11 model...")
 
             from src.inference.predict import DogAggressionPipeline
 
-            cls_path = self.classifier_path.get()
-            if not cls_path or not Path(cls_path).exists():
-                cls_path = None
-
+            pose_model = "yolo11m-pose.pt" if self.pose_enabled.get() else None
             pipeline = DogAggressionPipeline(
                 detector_path=self.detector_path.get(),
-                classifier_path=cls_path,
+                pose_model=pose_model,
                 det_conf=self.det_conf.get(),
-                aggression_threshold=self.aggression_threshold.get(),
+                risk_threshold=self.risk_threshold.get(),
+                sustain_frames=self.sustain_frames.get(),
             )
 
             self._update_status("Processing video...")
@@ -535,8 +503,9 @@ class DogAggressionApp:
             skip = self.skip_frames.get()
             frame_count = 0
             processed = 0
+            total_persons = 0
             total_dogs = 0
-            total_aggressive = 0
+            total_alerts = 0
             start_time = time.time()
 
             while not self.stop_requested:
@@ -554,23 +523,34 @@ class DogAggressionApp:
                 results = pipeline.process_frame(frame)
                 annotated = pipeline.draw_results(frame, results)
 
-                total_dogs += len(results)
-                alerts_now = [r for r in results if r["alert"]]
-                total_aggressive += len(alerts_now)
+                n_persons = len(pipeline._last_persons)
+                n_dogs = len(results)
+                total_persons += n_persons
+                total_dogs += n_dogs
 
-                if alerts_now:
+                new_alerts_now = [r for r in results if r.get("new_alert")]
+                total_alerts += len(new_alerts_now)
+
+                if new_alerts_now:
                     timestamp_s = frame_count / fps
-                    for a in alerts_now:
+                    for a in new_alerts_now:
+                        f = a.get("features", {})
                         entry = {
                             "time": f"{int(timestamp_s//60):02d}:{int(timestamp_s%60):02d}",
                             "frame": frame_count,
-                            "confidence": round(a["behavior_confidence"], 3),
+                            "track_id": a["track_id"],
+                            "risk": round(a["risk"], 3),
+                            "features": f,
                         }
                         self.alerts.append(entry)
                         self.log(
-                            f"[{entry['time']}] ALERT — Aggressive dog "
-                            f"(conf: {entry['confidence']:.2%}, frame {frame_count})"
+                            f"[{entry['time']}] ALERT dog#{a['track_id']} "
+                            f"risk={a['risk']:.2f} "
+                            f"(dist={f.get('distance',0)} vel={f.get('velocity',0)} "
+                            f"post={f.get('posture',0)} pose={f.get('human_pose',0)}) "
+                            f"frame {frame_count}"
                         )
+                    self.root.after(0, self.root.bell)
 
                 if writer:
                     writer.write(annotated)
@@ -579,17 +559,17 @@ class DogAggressionApp:
                 elapsed = time.time() - start_time
                 current_fps = processed / elapsed if elapsed > 0 else 0
 
-                # Update UI every 3 frames
-                if processed % 3 == 0:
-                    self.stats_vars["frames"].set(f"{frame_count:,}")
-                    self.stats_vars["dogs"].set(f"{total_dogs:,}")
-                    self.stats_vars["alerts"].set(f"{total_aggressive:,}")
-                    self.stats_vars["fps"].set(f"{current_fps:.1f}")
+                # Update UI on every processed frame for smooth annotations
+                self.stats_vars["frames"].set(f"{frame_count:,}")
+                self.stats_vars["persons"].set(f"{total_persons:,}")
+                self.stats_vars["dogs"].set(f"{total_dogs:,}")
+                self.stats_vars["alerts"].set(f"{total_alerts:,}")
+                self.stats_vars["fps"].set(f"{current_fps:.1f}")
 
-                    progress_val = (frame_count / total_frames) * 100
-                    self.progress["value"] = progress_val
+                progress_val = (frame_count / total_frames) * 100
+                self.progress["value"] = progress_val
 
-                    self.root.after(0, self._display_frame, annotated)
+                self.root.after(0, self._display_frame, annotated)
 
             cap.release()
             if writer:
@@ -601,8 +581,8 @@ class DogAggressionApp:
                 self._update_status(f"Stopped after {processed:,} frames")
             else:
                 self._update_status(
-                    f"Complete — {processed:,} frames in {total_time:.1f}s "
-                    f"({total_aggressive} alerts)"
+                    f"Complete -- {processed:,} frames in {total_time:.1f}s "
+                    f"({total_alerts} alerts)"
                 )
 
             if output_path:
@@ -612,15 +592,15 @@ class DogAggressionApp:
                 self.export_btn.config(state="normal")
                 messagebox.showinfo(
                     "Analysis Complete",
-                    f"Found {len(self.alerts)} aggressive detection(s)!\n\n"
+                    f"Found {len(self.alerts)} alert(s)!\n\n"
                     f"Frames processed: {processed:,}\n"
                     f"Total dogs: {total_dogs:,}\n"
-                    f"Alerts: {total_aggressive:,}"
+                    f"Alerts: {total_alerts:,}"
                 )
             else:
                 messagebox.showinfo(
                     "Analysis Complete",
-                    f"No aggressive behavior detected.\n\n"
+                    f"No aggression risk detected.\n\n"
                     f"Frames processed: {processed:,}\n"
                     f"Dogs detected: {total_dogs:,}"
                 )
