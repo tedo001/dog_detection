@@ -1,8 +1,8 @@
 """
-Dog Aggression Detection - Experimental GUI (Model Switcher)
+Dog Aggression Detection - YOLO26 Edition
 
-Same as app.py but lets you pick any YOLO model from a dropdown
-to compare detection performance across different versions.
+Same pipeline as app.py but locked to YOLO26 (Ultralytics, 2026).
+Auto-downloads yolo26n.pt on first run.
 
 Run with:
     python app2.py
@@ -20,34 +20,22 @@ import cv2
 from PIL import Image, ImageTk
 
 
-YOLO_MODELS = [
-    # YOLO26 - latest (2026)
-    "yolo26n.pt",
-    "yolo26s.pt",
-    "yolo26m.pt",
-    "yolo26l.pt",
-    "yolo26x.pt",
-    # YOLO11 - previous stable
-    "yolo11n.pt",
-    "yolo11s.pt",
-    "yolo11m.pt",
-    "yolo11l.pt",
-    "yolo11x.pt",
-    # older versions
-    "yolo12m.pt",
-    "yolov8n.pt",
-    "yolov8m.pt",
-    "yolov9c.pt",
-    "yolov10m.pt",
-]
+# YOLO26 size variants - pick based on your hardware
+YOLO26_VARIANTS = {
+    "yolo26n.pt": "Nano   - fastest (CPU friendly)",
+    "yolo26s.pt": "Small  - fast",
+    "yolo26m.pt": "Medium - balanced",
+    "yolo26l.pt": "Large  - more accurate",
+    "yolo26x.pt": "XLarge - best accuracy",
+}
 
 
 class DogAggressionAppV2:
-    """Experimental GUI with model selector."""
+    """YOLO26-only experimental GUI."""
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Dog Aggression Detection - Experiment (Model Switcher)")
+        self.root.title("Dog Aggression Detection - YOLO26 Edition")
         self.root.geometry("1280x900")
         self.root.configure(bg="#1e1e1e")
 
@@ -56,7 +44,8 @@ class DogAggressionAppV2:
         self.stop_requested = False
         self.alerts = []
 
-        self.detector_path = tk.StringVar(value="yolo26n.pt")
+        # YOLO26 size variant (default: nano for speed)
+        self.yolo26_variant = tk.StringVar(value="yolo26n.pt")
         self.pose_enabled = tk.BooleanVar(value=True)
         self.det_conf = tk.DoubleVar(value=0.35)
         self.risk_threshold = tk.DoubleVar(value=0.35)
@@ -67,23 +56,20 @@ class DogAggressionAppV2:
         self._build_ui()
 
     def _build_ui(self):
-        # Title bar
         title_frame = tk.Frame(self.root, bg="#2d2d2d", height=60)
         title_frame.pack(fill="x")
         title_frame.pack_propagate(False)
 
         tk.Label(
-            title_frame,
-            text="Dog Aggression Detection  [EXPERIMENT]",
+            title_frame, text="Dog Aggression Detection",
             font=("Segoe UI", 16, "bold"),
-            bg="#2d2d2d", fg="#f59e0b",
+            bg="#2d2d2d", fg="#ffffff",
         ).pack(side="left", padx=20, pady=15)
 
         tk.Label(
-            title_frame,
-            text="YOLO26 + Model Switcher",
-            font=("Segoe UI", 10),
-            bg="#2d2d2d", fg="#888888",
+            title_frame, text="YOLO26 Edition",
+            font=("Segoe UI", 11, "bold"),
+            bg="#2d2d2d", fg="#f59e0b",
         ).pack(side="left", pady=15)
 
         main_frame = tk.Frame(self.root, bg="#1e1e1e")
@@ -125,25 +111,23 @@ class DogAggressionAppV2:
             relief="flat", padx=15, pady=5, cursor="hand2",
         ).pack(side="left")
 
-        # Model selector dropdown
-        self._section_header(parent, "2. YOLO Model")
+        # YOLO26 size picker
+        self._section_header(parent, "2. YOLO26 Model Size")
 
-        tk.Label(parent, text="Select model to test:",
-                 bg="#252525", fg="#cccccc", font=("Segoe UI", 9)
-                 ).pack(anchor="w", padx=15)
-
-        model_combo = ttk.Combobox(
-            parent, textvariable=self.detector_path,
-            values=YOLO_MODELS, state="normal",
-            font=("Segoe UI", 9),
-        )
-        model_combo.pack(fill="x", padx=15, pady=(0, 4))
+        for variant, desc in YOLO26_VARIANTS.items():
+            tk.Radiobutton(
+                parent, text=f"{variant}  -  {desc}",
+                variable=self.yolo26_variant, value=variant,
+                bg="#252525", fg="#cccccc", selectcolor="#1e1e1e",
+                activebackground="#252525", activeforeground="#f59e0b",
+                font=("Consolas", 9), anchor="w",
+            ).pack(fill="x", padx=15, pady=1)
 
         tk.Label(
             parent,
-            text="Or type any .pt path manually above",
+            text="(auto-downloads on first run)",
             bg="#252525", fg="#666666", font=("Segoe UI", 8),
-        ).pack(anchor="w", padx=15, pady=(0, 8))
+        ).pack(anchor="w", padx=15, pady=(4, 8))
 
         tk.Checkbutton(
             parent, text="Use pose model (human skeleton)",
@@ -156,10 +140,10 @@ class DogAggressionAppV2:
         # Settings
         self._section_header(parent, "3. Settings")
 
-        self._slider(parent, "Detection confidence", self.det_conf, 0.1, 0.95, 0.05)
-        self._slider(parent, "Risk threshold", self.risk_threshold, 0.1, 0.95, 0.05)
-        self._slider(parent, "Sustain frames (N)", self.sustain_frames, 1, 20, 1, is_int=True)
-        self._slider(parent, "Skip frames", self.skip_frames, 1, 30, 1, is_int=True)
+        self._slider(parent, "Detection confidence", self.det_conf, 0.1, 0.95)
+        self._slider(parent, "Risk threshold", self.risk_threshold, 0.1, 0.95)
+        self._slider(parent, "Sustain frames (N)", self.sustain_frames, 1, 20, is_int=True)
+        self._slider(parent, "Skip frames", self.skip_frames, 1, 30, is_int=True)
 
         tk.Checkbutton(
             parent, text="Save annotated output video",
@@ -215,7 +199,6 @@ class DogAggressionAppV2:
             "dogs": tk.StringVar(value="0"),
             "alerts": tk.StringVar(value="0"),
             "fps": tk.StringVar(value="0.0"),
-            "model": tk.StringVar(value="-"),
         }
 
         for key, label in [
@@ -232,11 +215,12 @@ class DogAggressionAppV2:
                      font=("Segoe UI", 9)).pack()
 
         # Active model badge
+        self.model_status = tk.StringVar(value="Idle")
         model_frame = tk.Frame(parent, bg="#1a1a1a", pady=4)
         model_frame.pack(fill="x", pady=(0, 5))
-        tk.Label(model_frame, text="Active model: ", bg="#1a1a1a",
+        tk.Label(model_frame, text="YOLO26: ", bg="#1a1a1a",
                  fg="#888888", font=("Segoe UI", 9)).pack(side="left", padx=10)
-        tk.Label(model_frame, textvariable=self.stats_vars["model"],
+        tk.Label(model_frame, textvariable=self.model_status,
                  bg="#1a1a1a", fg="#f59e0b",
                  font=("Segoe UI", 9, "bold")).pack(side="left")
 
@@ -269,7 +253,7 @@ class DogAggressionAppV2:
             font=("Segoe UI", 11, "bold"), anchor="w",
         ).pack(fill="x", padx=15, pady=(10, 8))
 
-    def _slider(self, parent, label, variable, from_, to, resolution, is_int=False):
+    def _slider(self, parent, label, variable, from_, to, is_int=False):
         container = tk.Frame(parent, bg="#252525")
         container.pack(fill="x", padx=15, pady=(3, 8))
         header = tk.Frame(container, bg="#252525")
@@ -376,9 +360,10 @@ class DogAggressionAppV2:
 
     def _detection_worker(self):
         try:
-            model_name = self.detector_path.get()
-            self._update_status(f"Loading {model_name}...")
-            self.stats_vars["model"].set(model_name)
+            model_name = self.yolo26_variant.get()
+            self._update_status(f"Loading {model_name} (downloads on first run)...")
+            self.model_status.set(f"Loading {model_name}")
+            self.log(f"Initialising YOLO26: {model_name}")
 
             from src.inference.predict import DogAggressionPipeline
 
@@ -391,7 +376,9 @@ class DogAggressionAppV2:
                 sustain_frames=self.sustain_frames.get(),
             )
 
+            self.model_status.set(f"{model_name} (active)")
             self._update_status("Processing video...")
+
             cap = cv2.VideoCapture(self.video_path)
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -403,7 +390,7 @@ class DogAggressionAppV2:
             if self.save_output.get():
                 Path("experiments").mkdir(exist_ok=True)
                 output_path = (
-                    f"experiments/exp_{model_name.replace('.pt','')}_"
+                    f"experiments/yolo26_{model_name.replace('.pt','')}_"
                     f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
                 )
                 fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -451,7 +438,7 @@ class DogAggressionAppV2:
                         self.alerts.append(entry)
                         self.log(
                             f"[{entry['time']}] ALERT dog#{a['track_id']} "
-                            f"risk={a['risk']:.2f} model={model_name} frame {frame_count}"
+                            f"risk={a['risk']:.2f} frame {frame_count}"
                         )
                     self.root.after(0, self.root.bell)
 
@@ -479,8 +466,8 @@ class DogAggressionAppV2:
                 self._update_status(f"Stopped after {processed:,} frames")
             else:
                 self._update_status(
-                    f"Complete — {processed:,} frames in {total_time:.1f}s "
-                    f"({total_alerts} alerts) [{model_name}]"
+                    f"Complete - {processed:,} frames in {total_time:.1f}s "
+                    f"({total_alerts} alerts)"
                 )
 
             if output_path:
@@ -506,6 +493,7 @@ class DogAggressionAppV2:
 
         except Exception as e:
             self.log(f"ERROR: {e}")
+            self.model_status.set("Error")
             messagebox.showerror("Error", f"Detection failed:\n{e}")
         finally:
             self.is_processing = False
@@ -527,7 +515,7 @@ class DogAggressionAppV2:
         path = filedialog.asksaveasfilename(
             defaultextension=".json",
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-            initialfile=f"alerts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            initialfile=f"yolo26_alerts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
         )
         if path:
             with open(path, "w") as f:
