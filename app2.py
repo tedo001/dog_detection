@@ -21,17 +21,24 @@ from PIL import Image, ImageTk
 
 
 YOLO_MODELS = [
+    # YOLO26 - latest (2026)
+    "yolo26n.pt",
+    "yolo26s.pt",
+    "yolo26m.pt",
+    "yolo26l.pt",
+    "yolo26x.pt",
+    # YOLO11 - previous stable
     "yolo11n.pt",
     "yolo11s.pt",
     "yolo11m.pt",
     "yolo11l.pt",
     "yolo11x.pt",
+    # older versions
+    "yolo12m.pt",
     "yolov8n.pt",
     "yolov8m.pt",
-    "yolov8l.pt",
     "yolov9c.pt",
     "yolov10m.pt",
-    "yolo12m.pt",
 ]
 
 
@@ -49,7 +56,7 @@ class DogAggressionAppV2:
         self.stop_requested = False
         self.alerts = []
 
-        self.detector_path = tk.StringVar(value="yolo11m.pt")
+        self.detector_path = tk.StringVar(value="yolo26n.pt")
         self.pose_enabled = tk.BooleanVar(value=True)
         self.det_conf = tk.DoubleVar(value=0.35)
         self.risk_threshold = tk.DoubleVar(value=0.35)
@@ -74,7 +81,7 @@ class DogAggressionAppV2:
 
         tk.Label(
             title_frame,
-            text="Model Switcher Branch",
+            text="YOLO26 + Model Switcher",
             font=("Segoe UI", 10),
             bg="#2d2d2d", fg="#888888",
         ).pack(side="left", pady=15)
