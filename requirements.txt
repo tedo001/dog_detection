@@ -20,4 +20,6 @@ numpy>=1.24.0
 matplotlib>=3.7.0
 pandas>=2.0.0
 tqdm>=4.65.0
-#pip install opencv-python or pip install opencv-python-headless or /Users/vichus/PycharmProjects/dog_detection/.venv/bin/pip install opencv-python
+
+# GUI Application
+Pillow>=10.0.0
