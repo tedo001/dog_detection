@@ -17,6 +17,7 @@ import time
 import threading
 import json
 import urllib.request
+import numpy as np
 from pathlib import Path
 from datetime import datetime
 
@@ -29,6 +30,68 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import cv2
 cv2.setLogLevel(0)   # silence OpenCV C++ logger
 from PIL import Image, ImageTk
+
+
+class MJPEGCapture:
+    """
+    Reliable MJPEG stream reader for ESP32-CAM over HTTP.
+    cv2.VideoCapture fails on Windows with multipart/x-mixed-replace streams;
+    this reads raw JPEG frames by scanning for SOI/EOI markers instead.
+    """
+
+    def __init__(self, url, timeout=5):
+        self.url      = url
+        self._stream  = None
+        self._buf     = b""
+        self._opened  = False
+        try:
+            req = urllib.request.Request(url, headers={"Connection": "keep-alive"})
+            self._stream = urllib.request.urlopen(req, timeout=timeout)
+            self._opened = True
+        except Exception:
+            self._opened = False
+
+    def isOpened(self):
+        return self._opened
+
+    def read(self):
+        if not self._opened:
+            return False, None
+        try:
+            while True:
+                self._buf += self._stream.read(4096)
+                start = self._buf.find(b"\xff\xd8")   # JPEG SOI
+                end   = self._buf.find(b"\xff\xd9")   # JPEG EOI
+                if start != -1 and end != -1 and end > start:
+                    jpg   = self._buf[start:end + 2]
+                    self._buf = self._buf[end + 2:]
+                    arr   = np.frombuffer(jpg, dtype=np.uint8)
+                    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        return True, frame
+        except Exception:
+            self._opened = False
+            return False, None
+
+    def get(self, prop):
+        defaults = {
+            cv2.CAP_PROP_FPS:          15.0,
+            cv2.CAP_PROP_FRAME_COUNT:   0,
+            cv2.CAP_PROP_FRAME_WIDTH:  640,
+            cv2.CAP_PROP_FRAME_HEIGHT: 480,
+        }
+        return defaults.get(prop, 0)
+
+    def set(self, prop, value):
+        return False   # live stream — seek not supported
+
+    def release(self):
+        self._opened = False
+        if self._stream:
+            try:
+                self._stream.close()
+            except Exception:
+                pass
 
 
 YOLO26_VARIANTS = {
@@ -727,24 +790,31 @@ class DogAggressionAppV2:
                         f"  2. IP address is correct\n"
                         f"  3. Laptop and ESP32 are on the same WiFi"
                     )
-                self.log(f"[ESP-CAM] Opening stream: {stream_url}")
-                cap     = cv2.VideoCapture(stream_url)
+                # Use custom MJPEG reader — cv2.VideoCapture fails on Windows
+                # with multipart/x-mixed-replace HTTP streams.
+                self.log(f"[ESP-CAM] Opening MJPEG stream: {stream_url}")
+                self._update_status("Connecting to ESP32-CAM stream ...")
+                cap     = MJPEGCapture(stream_url, timeout=5)
                 is_live = True
 
             if not cap.isOpened():
                 raise RuntimeError("Could not open video source.")
 
-            # For ESP-CAM: verify first frame arrives within 4 s
+            # Verify first frame arrives (gives up after ~3 s of read attempts)
             if src == SOURCE_ESP_CAM:
-                self._update_status("Waiting for first frame from ESP32-CAM ...")
-                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 4000)
-                ret_test, _ = cap.read()
+                self._update_status("Waiting for first frame ...")
+                deadline = time.time() + 6
+                ret_test = False
+                while time.time() < deadline:
+                    ret_test, _ = cap.read()
+                    if ret_test:
+                        break
                 if not ret_test:
                     cap.release()
                     raise RuntimeError(
-                        f"ESP32-CAM stream opened but no frames received.\n\n"
+                        f"ESP32-CAM connected but no frames received within 6 s.\n\n"
                         f"Stream URL: {stream_url}\n"
-                        f"Check that the MJPEG server is running on the ESP32."
+                        f"Make sure the MJPEG server on the ESP32 is running."
                     )
 
             self._update_status("Processing...")
