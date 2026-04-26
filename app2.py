@@ -227,28 +227,46 @@ class DogAggressionAppV2:
 
         # Folder browser row
         folder_row = tk.Frame(self.video_panel, bg="#2a2a2a")
-        folder_row.pack(fill="x", pady=(0, 4))
+        folder_row.pack(fill="x", pady=(0, 3))
         tk.Label(folder_row, text="Folder:", bg="#2a2a2a", fg="#888888",
                  font=("Segoe UI", 9)).pack(side="left")
         self.folder_var = tk.StringVar(value="")
         self.folder_entry = tk.Entry(folder_row, textvariable=self.folder_var,
                                      bg="#1e1e1e", fg="#cccccc",
                                      insertbackground="white",
-                                     font=("Segoe UI", 8), width=22)
+                                     font=("Segoe UI", 8), width=18)
         self.folder_entry.pack(side="left", padx=(4, 4), fill="x", expand=True)
         tk.Button(folder_row, text="...", command=self._browse_folder,
-                  bg="#3a3a3a", fg="white", font=("Segoe UI", 9),
+                  bg="#0078d4", fg="white", font=("Segoe UI", 9),
+                  relief="flat", padx=8, pady=2, cursor="hand2",
+                  ).pack(side="left", padx=(0, 3))
+        tk.Button(folder_row, text="↺", command=self._refresh_folder,
+                  bg="#3a3a3a", fg="white", font=("Segoe UI", 10),
                   relief="flat", padx=6, pady=2, cursor="hand2",
                   ).pack(side="left")
 
+        # Subfolder toggle
+        opt_row = tk.Frame(self.video_panel, bg="#2a2a2a")
+        opt_row.pack(fill="x", pady=(0, 3))
+        self.subfolder_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(opt_row, text="Include subfolders",
+                       variable=self.subfolder_var,
+                       command=self._refresh_folder,
+                       bg="#2a2a2a", fg="#888888", selectcolor="#1e1e1e",
+                       activebackground="#2a2a2a", font=("Segoe UI", 8),
+                       ).pack(side="left")
+        self.file_count_lbl = tk.Label(opt_row, text="",
+                                        bg="#2a2a2a", fg="#555555",
+                                        font=("Segoe UI", 8))
+        self.file_count_lbl.pack(side="right")
+
         # Video file listbox
-        list_frame = tk.Frame(self.video_panel, bg="#1e1e1e",
-                              relief="solid", bd=1)
-        list_frame.pack(fill="x", pady=(0, 6))
+        list_frame = tk.Frame(self.video_panel, bg="#1e1e1e", relief="solid", bd=1)
+        list_frame.pack(fill="x", pady=(0, 5))
         self.file_listbox = tk.Listbox(
             list_frame, bg="#1e1e1e", fg="#cccccc",
             selectbackground="#0078d4", selectforeground="#ffffff",
-            font=("Segoe UI", 9), height=5, relief="flat",
+            font=("Segoe UI", 9), height=6, relief="flat",
             activestyle="none", cursor="hand2",
         )
         list_sb = ttk.Scrollbar(list_frame, orient="vertical",
@@ -265,7 +283,7 @@ class DogAggressionAppV2:
             bg="#2a2a2a", fg="#888888",
             font=("Segoe UI", 8), wraplength=310, justify="left", anchor="w",
         )
-        self.path_label.pack(fill="x", pady=(0, 6))
+        self.path_label.pack(fill="x", pady=(0, 5))
 
         # Action buttons row
         vbtn_row = tk.Frame(self.video_panel, bg="#2a2a2a")
@@ -651,7 +669,8 @@ class DogAggressionAppV2:
     # VIDEO FILE CONTROLS
     # ─────────────────────────────────────────────────────────
 
-    VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".m4v", ".ts"}
+    VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv",
+                  ".m4v", ".ts", ".3gp", ".webm", ".mpeg", ".mpg"}
 
     def _browse_folder(self):
         folder = filedialog.askdirectory(title="Select folder with videos")
@@ -660,29 +679,55 @@ class DogAggressionAppV2:
         self.folder_var.set(folder)
         self._refresh_file_list(folder)
 
+    def _refresh_folder(self):
+        folder = self.folder_var.get().strip()
+        if folder:
+            self._refresh_file_list(folder)
+
     def _refresh_file_list(self, folder):
         self.file_listbox.delete(0, "end")
+        self._folder_files = []
+        p = Path(folder)
+        if not p.exists():
+            self.file_listbox.insert("end", "  Folder not found")
+            self.file_count_lbl.config(text="")
+            return
         try:
-            files = sorted(
-                [f for f in Path(folder).iterdir()
-                 if f.is_file() and f.suffix.lower() in self.VIDEO_EXTS],
-                key=lambda f: f.name.lower(),
-            )
+            # flat or recursive depending on checkbox
+            if self.subfolder_var.get():
+                all_files = [f for f in p.rglob("*")
+                             if f.is_file() and f.suffix.lower() in self.VIDEO_EXTS]
+            else:
+                all_files = [f for f in p.iterdir()
+                             if f.is_file() and f.suffix.lower() in self.VIDEO_EXTS]
+
+            files = sorted(all_files, key=lambda f: f.name.lower())
+
             if files:
                 for f in files:
-                    self.file_listbox.insert("end", f.name)
+                    # show relative path so subfolders are visible
+                    try:
+                        rel = f.relative_to(p)
+                    except ValueError:
+                        rel = f.name
+                    self.file_listbox.insert("end", f"  {rel}")
                 self._folder_files = files
-                self.log(f"Folder: {len(files)} video(s) found in {folder}")
+                self.file_count_lbl.config(text=f"{len(files)} file(s)")
+                self.log(f"[Files] {len(files)} video(s) in {folder}")
             else:
-                self.file_listbox.insert("end", "(no video files found)")
-                self._folder_files = []
+                self.file_listbox.insert(
+                    "end",
+                    "  No video files found"
+                    + (" (including subfolders)" if self.subfolder_var.get() else "")
+                )
+                self.file_count_lbl.config(text="0 files")
         except Exception as e:
-            self.file_listbox.insert("end", f"Error: {e}")
-            self._folder_files = []
+            self.file_listbox.insert("end", f"  Error: {e}")
+            self.file_count_lbl.config(text="")
 
     def _on_file_select(self, _event=None):
         sel = self.file_listbox.curselection()
-        if not sel or not hasattr(self, "_folder_files") or not self._folder_files:
+        if not sel or not self._folder_files:
             return
         idx = sel[0]
         if idx < len(self._folder_files):
