@@ -117,9 +117,10 @@ class DogAggressionAppV2:
         self.root.configure(bg="#1e1e1e")
 
         # source
-        self.source_type = tk.StringVar(value=SOURCE_VIDEO)
-        self.video_path  = None
-        self.cam_index   = tk.IntVar(value=0)
+        self.source_type  = tk.StringVar(value=SOURCE_VIDEO)
+        self.video_path   = None
+        self.cam_index    = tk.IntVar(value=0)
+        self._folder_files = []
 
         # ESP
         self.esp_ip             = tk.StringVar(value="192.168.1.100")
@@ -224,16 +225,52 @@ class DogAggressionAppV2:
         # -- Video file sub-panel --
         self.video_panel = tk.Frame(parent, bg="#2a2a2a", padx=10, pady=6)
 
+        # Folder browser row
+        folder_row = tk.Frame(self.video_panel, bg="#2a2a2a")
+        folder_row.pack(fill="x", pady=(0, 4))
+        tk.Label(folder_row, text="Folder:", bg="#2a2a2a", fg="#888888",
+                 font=("Segoe UI", 9)).pack(side="left")
+        self.folder_var = tk.StringVar(value="")
+        self.folder_entry = tk.Entry(folder_row, textvariable=self.folder_var,
+                                     bg="#1e1e1e", fg="#cccccc",
+                                     insertbackground="white",
+                                     font=("Segoe UI", 8), width=22)
+        self.folder_entry.pack(side="left", padx=(4, 4), fill="x", expand=True)
+        tk.Button(folder_row, text="...", command=self._browse_folder,
+                  bg="#3a3a3a", fg="white", font=("Segoe UI", 9),
+                  relief="flat", padx=6, pady=2, cursor="hand2",
+                  ).pack(side="left")
+
+        # Video file listbox
+        list_frame = tk.Frame(self.video_panel, bg="#1e1e1e",
+                              relief="solid", bd=1)
+        list_frame.pack(fill="x", pady=(0, 6))
+        self.file_listbox = tk.Listbox(
+            list_frame, bg="#1e1e1e", fg="#cccccc",
+            selectbackground="#0078d4", selectforeground="#ffffff",
+            font=("Segoe UI", 9), height=5, relief="flat",
+            activestyle="none", cursor="hand2",
+        )
+        list_sb = ttk.Scrollbar(list_frame, orient="vertical",
+                                command=self.file_listbox.yview)
+        self.file_listbox.configure(yscrollcommand=list_sb.set)
+        list_sb.pack(side="right", fill="y")
+        self.file_listbox.pack(side="left", fill="both", expand=True)
+        self.file_listbox.bind("<<ListboxSelect>>", self._on_file_select)
+        self.file_listbox.bind("<Double-Button-1>", self._on_file_double_click)
+
+        # Selected file label
         self.path_label = tk.Label(
             self.video_panel, text="No video selected",
             bg="#2a2a2a", fg="#888888",
-            font=("Segoe UI", 9), wraplength=310, justify="left", anchor="w",
+            font=("Segoe UI", 8), wraplength=310, justify="left", anchor="w",
         )
         self.path_label.pack(fill="x", pady=(0, 6))
 
+        # Action buttons row
         vbtn_row = tk.Frame(self.video_panel, bg="#2a2a2a")
         vbtn_row.pack(fill="x")
-        tk.Button(vbtn_row, text="Browse...", command=self.browse_video,
+        tk.Button(vbtn_row, text="Browse File", command=self.browse_video,
                   bg="#0078d4", fg="white", font=("Segoe UI", 9),
                   relief="flat", padx=10, pady=4, cursor="hand2",
                   ).pack(side="left", padx=(0, 4))
@@ -613,6 +650,48 @@ class DogAggressionAppV2:
     # ─────────────────────────────────────────────────────────
     # VIDEO FILE CONTROLS
     # ─────────────────────────────────────────────────────────
+
+    VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".m4v", ".ts"}
+
+    def _browse_folder(self):
+        folder = filedialog.askdirectory(title="Select folder with videos")
+        if not folder:
+            return
+        self.folder_var.set(folder)
+        self._refresh_file_list(folder)
+
+    def _refresh_file_list(self, folder):
+        self.file_listbox.delete(0, "end")
+        try:
+            files = sorted(
+                [f for f in Path(folder).iterdir()
+                 if f.is_file() and f.suffix.lower() in self.VIDEO_EXTS],
+                key=lambda f: f.name.lower(),
+            )
+            if files:
+                for f in files:
+                    self.file_listbox.insert("end", f.name)
+                self._folder_files = files
+                self.log(f"Folder: {len(files)} video(s) found in {folder}")
+            else:
+                self.file_listbox.insert("end", "(no video files found)")
+                self._folder_files = []
+        except Exception as e:
+            self.file_listbox.insert("end", f"Error: {e}")
+            self._folder_files = []
+
+    def _on_file_select(self, _event=None):
+        sel = self.file_listbox.curselection()
+        if not sel or not hasattr(self, "_folder_files") or not self._folder_files:
+            return
+        idx = sel[0]
+        if idx < len(self._folder_files):
+            self._set_video(str(self._folder_files[idx]))
+
+    def _on_file_double_click(self, _event=None):
+        self._on_file_select()
+        if self.video_path and not self.is_processing:
+            self.start_detection()
 
     def browse_video(self):
         path = filedialog.askopenfilename(
