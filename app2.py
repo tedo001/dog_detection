@@ -223,50 +223,39 @@ class DogAggressionAppV2:
             ).pack(fill="x", padx=15, pady=2)
 
         # -- Video file sub-panel --
-        self.video_panel = tk.Frame(parent, bg="#2a2a2a", padx=10, pady=6)
+        self.video_panel = tk.Frame(parent, bg="#2a2a2a", padx=10, pady=8)
 
-        # Folder browser row
-        folder_row = tk.Frame(self.video_panel, bg="#2a2a2a")
-        folder_row.pack(fill="x", pady=(0, 3))
-        tk.Label(folder_row, text="Folder:", bg="#2a2a2a", fg="#888888",
-                 font=("Segoe UI", 9)).pack(side="left")
-        self.folder_var = tk.StringVar(value="")
-        self.folder_entry = tk.Entry(folder_row, textvariable=self.folder_var,
-                                     bg="#1e1e1e", fg="#cccccc",
-                                     insertbackground="white",
-                                     font=("Segoe UI", 8), width=18)
-        self.folder_entry.pack(side="left", padx=(4, 4), fill="x", expand=True)
-        tk.Button(folder_row, text="...", command=self._browse_folder,
-                  bg="#0078d4", fg="white", font=("Segoe UI", 9),
-                  relief="flat", padx=8, pady=2, cursor="hand2",
-                  ).pack(side="left", padx=(0, 3))
-        tk.Button(folder_row, text="↺", command=self._refresh_folder,
-                  bg="#3a3a3a", fg="white", font=("Segoe UI", 10),
-                  relief="flat", padx=6, pady=2, cursor="hand2",
-                  ).pack(side="left")
+        # Big browse button
+        tk.Button(
+            self.video_panel, text="Browse Local Video",
+            command=self.browse_video,
+            bg="#0078d4", fg="white", font=("Segoe UI", 11, "bold"),
+            relief="flat", pady=10, cursor="hand2",
+        ).pack(fill="x", pady=(0, 6))
 
-        # Subfolder toggle
-        opt_row = tk.Frame(self.video_panel, bg="#2a2a2a")
-        opt_row.pack(fill="x", pady=(0, 3))
-        self.subfolder_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(opt_row, text="Include subfolders",
-                       variable=self.subfolder_var,
-                       command=self._refresh_folder,
-                       bg="#2a2a2a", fg="#888888", selectcolor="#1e1e1e",
-                       activebackground="#2a2a2a", font=("Segoe UI", 8),
-                       ).pack(side="left")
-        self.file_count_lbl = tk.Label(opt_row, text="",
-                                        bg="#2a2a2a", fg="#555555",
-                                        font=("Segoe UI", 8))
-        self.file_count_lbl.pack(side="right")
+        # Selected file display box
+        file_box = tk.Frame(self.video_panel, bg="#1e1e1e", relief="solid", bd=1)
+        file_box.pack(fill="x", pady=(0, 5))
+        tk.Label(file_box, text="Selected:", bg="#1e1e1e", fg="#555555",
+                 font=("Segoe UI", 8)).pack(anchor="w", padx=6, pady=(4, 0))
+        self.path_label = tk.Label(
+            file_box, text="No video selected",
+            bg="#1e1e1e", fg="#888888",
+            font=("Segoe UI", 9), wraplength=300,
+            justify="left", anchor="w",
+        )
+        self.path_label.pack(fill="x", padx=6, pady=(0, 6))
 
-        # Video file listbox
+        # Recent files listbox
+        tk.Label(self.video_panel, text="Recent videos:",
+                 bg="#2a2a2a", fg="#666666",
+                 font=("Segoe UI", 8)).pack(anchor="w", pady=(0, 2))
         list_frame = tk.Frame(self.video_panel, bg="#1e1e1e", relief="solid", bd=1)
-        list_frame.pack(fill="x", pady=(0, 5))
+        list_frame.pack(fill="x", pady=(0, 6))
         self.file_listbox = tk.Listbox(
             list_frame, bg="#1e1e1e", fg="#cccccc",
             selectbackground="#0078d4", selectforeground="#ffffff",
-            font=("Segoe UI", 9), height=6, relief="flat",
+            font=("Segoe UI", 9), height=5, relief="flat",
             activestyle="none", cursor="hand2",
         )
         list_sb = ttk.Scrollbar(list_frame, orient="vertical",
@@ -277,21 +266,9 @@ class DogAggressionAppV2:
         self.file_listbox.bind("<<ListboxSelect>>", self._on_file_select)
         self.file_listbox.bind("<Double-Button-1>", self._on_file_double_click)
 
-        # Selected file label
-        self.path_label = tk.Label(
-            self.video_panel, text="No video selected",
-            bg="#2a2a2a", fg="#888888",
-            font=("Segoe UI", 8), wraplength=310, justify="left", anchor="w",
-        )
-        self.path_label.pack(fill="x", pady=(0, 5))
-
-        # Action buttons row
+        # Control buttons row
         vbtn_row = tk.Frame(self.video_panel, bg="#2a2a2a")
         vbtn_row.pack(fill="x")
-        tk.Button(vbtn_row, text="Browse File", command=self.browse_video,
-                  bg="#0078d4", fg="white", font=("Segoe UI", 9),
-                  relief="flat", padx=10, pady=4, cursor="hand2",
-                  ).pack(side="left", padx=(0, 4))
         tk.Button(vbtn_row, text="Enter Path", command=self.enter_path,
                   bg="#3a3a3a", fg="white", font=("Segoe UI", 9),
                   relief="flat", padx=10, pady=4, cursor="hand2",
@@ -671,59 +648,23 @@ class DogAggressionAppV2:
 
     VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv",
                   ".m4v", ".ts", ".3gp", ".webm", ".mpeg", ".mpg"}
+    MAX_RECENT = 10
 
-    def _browse_folder(self):
-        folder = filedialog.askdirectory(title="Select folder with videos")
-        if not folder:
-            return
-        self.folder_var.set(folder)
-        self._refresh_file_list(folder)
-
-    def _refresh_folder(self):
-        folder = self.folder_var.get().strip()
-        if folder:
-            self._refresh_file_list(folder)
-
-    def _refresh_file_list(self, folder):
-        self.file_listbox.delete(0, "end")
-        self._folder_files = []
-        p = Path(folder)
-        if not p.exists():
-            self.file_listbox.insert("end", "  Folder not found")
-            self.file_count_lbl.config(text="")
-            return
-        try:
-            # flat or recursive depending on checkbox
-            if self.subfolder_var.get():
-                all_files = [f for f in p.rglob("*")
-                             if f.is_file() and f.suffix.lower() in self.VIDEO_EXTS]
-            else:
-                all_files = [f for f in p.iterdir()
-                             if f.is_file() and f.suffix.lower() in self.VIDEO_EXTS]
-
-            files = sorted(all_files, key=lambda f: f.name.lower())
-
-            if files:
-                for f in files:
-                    # show relative path so subfolders are visible
-                    try:
-                        rel = f.relative_to(p)
-                    except ValueError:
-                        rel = f.name
-                    self.file_listbox.insert("end", f"  {rel}")
-                self._folder_files = files
-                self.file_count_lbl.config(text=f"{len(files)} file(s)")
-                self.log(f"[Files] {len(files)} video(s) in {folder}")
-            else:
-                self.file_listbox.insert(
-                    "end",
-                    "  No video files found"
-                    + (" (including subfolders)" if self.subfolder_var.get() else "")
-                )
-                self.file_count_lbl.config(text="0 files")
-        except Exception as e:
-            self.file_listbox.insert("end", f"  Error: {e}")
-            self.file_count_lbl.config(text="")
+    def _add_to_recent(self, path):
+        """Keep a recent-files list in the listbox (newest on top)."""
+        name = Path(path).name
+        # remove duplicate if already listed
+        for i in range(self.file_listbox.size()):
+            if self.file_listbox.get(i) == name:
+                self.file_listbox.delete(i)
+                self._folder_files.pop(i)
+                break
+        self.file_listbox.insert(0, name)
+        self._folder_files.insert(0, Path(path))
+        # cap list length
+        while self.file_listbox.size() > self.MAX_RECENT:
+            self.file_listbox.delete(self.MAX_RECENT)
+            self._folder_files = self._folder_files[:self.MAX_RECENT]
 
     def _on_file_select(self, _event=None):
         sel = self.file_listbox.curselection()
@@ -740,9 +681,10 @@ class DogAggressionAppV2:
 
     def browse_video(self):
         path = filedialog.askopenfilename(
-            title="Select Video",
+            title="Select Video File",
             filetypes=[
-                ("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv *.flv"),
+                ("Video files",
+                 "*.mp4 *.avi *.mov *.mkv *.wmv *.flv *.m4v *.ts *.3gp *.webm *.mpeg *.mpg"),
                 ("All files", "*.*"),
             ],
         )
@@ -781,7 +723,8 @@ class DogAggressionAppV2:
 
     def _set_video(self, path):
         self.video_path = path
-        self.path_label.config(text=path, fg="#22c55e")
+        self.path_label.config(text=Path(path).name, fg="#22c55e")
+        self._add_to_recent(path)
         cap = cv2.VideoCapture(path)
         ret, frame = cap.read()
         if ret:
