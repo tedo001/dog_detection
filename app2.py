@@ -611,10 +611,10 @@ class DogAggressionAppV2:
                 self.root.after(0, self.esp_status_lbl.config, {"fg": "#22c55e"})
                 failures = 0
 
-                # proximity alert (debounced 5 s)
+                # proximity alert — only log every 10 s; only flash/bell during detection
                 if dist is not None and dist < self.dist_alert_cm.get():
                     now = time.time()
-                    if now - self._proximity_last_ts >= 5.0:
+                    if now - self._proximity_last_ts >= 10.0:
                         self._proximity_last_ts = now
                         self.root.after(0, self._proximity_alert, dist)
 
@@ -638,9 +638,11 @@ class DogAggressionAppV2:
             self._esp_poll_stop.wait(0.5)
 
     def _proximity_alert(self, dist):
-        prefix = "[ESP][HR ALERT]" if self.alert_type.get() == "hr" else "[ESP]"
+        alert_t = self.alert_type.get()
+        prefix  = "[ESP][HR ALERT]" if alert_t == "hr" else "[ESP]"
         self.log(f"{prefix} Proximity: {dist:.1f} cm")
-        if self.alert_type.get() == "hr":
+        # Flash and bell ONLY when detection is actively running
+        if alert_t == "hr" and self.is_processing:
             self.root.bell()
             self._flash_alert()
 
