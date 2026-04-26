@@ -620,6 +620,12 @@ class DogAggressionAppV2:
         self.video_label.imgtk = imgtk
         self.video_label.config(image=imgtk, text="")
 
+    def _clear_display(self):
+        """Reset video panel to blank ready-state after detection stops."""
+        self.video_label.imgtk = None
+        self.video_label.config(image="", text="Video preview will appear here",
+                                bg="#000000", fg="#555555")
+
     def _flash_alert(self):
         """Briefly flash video border red for HR alerts."""
         self.video_label.config(bg="#dc2626")
@@ -836,10 +842,25 @@ class DogAggressionAppV2:
             self.model_status.set("Error")
             messagebox.showerror("Error", f"Detection failed:\n{e}")
         finally:
+            # Release model and GPU memory
+            try:
+                del pipeline
+            except NameError:
+                pass
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
             self.is_processing = False
+            self.model_status.set("Idle")
+            self.progress["value"] = 0
             self.start_btn.config(state="normal")
             self.stop_btn.config(state="disabled")
             self.forward_btn.config(state="disabled")
+            self.root.after(0, self._clear_display)
 
     # ─────────────────────────────────────────────────────────
     # HELPERS
