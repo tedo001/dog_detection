@@ -130,6 +130,7 @@ class DogAggressionAppV2:
         self._esp_poll_stop     = threading.Event()
         self._esp_poll_thread   = None
         self._proximity_last_ts = 0.0
+        self._flash_last_ts     = 0.0   # debounce for red flash
 
         # alert type
         self.alert_type = tk.StringVar(value="normal")   # "normal" | "hr"
@@ -443,11 +444,12 @@ class DogAggressionAppV2:
         self._on_source_change()
 
     def _build_display(self, parent):
-        video_frame = tk.Frame(parent, bg="#000000", relief="solid", bd=1)
-        video_frame.pack(fill="both", expand=True, pady=(0, 10))
+        # video_frame acts as the flash border (bd=4 gives visible border)
+        self.video_frame = tk.Frame(parent, bg="#1a1a1a", relief="solid", bd=4)
+        self.video_frame.pack(fill="both", expand=True, pady=(0, 10))
 
         self.video_label = tk.Label(
-            video_frame, text="Video preview will appear here",
+            self.video_frame, text="Video preview will appear here",
             bg="#000000", fg="#555555", font=("Segoe UI", 12),
         )
         self.video_label.pack(fill="both", expand=True)
@@ -761,11 +763,16 @@ class DogAggressionAppV2:
         self.video_label.imgtk = None
         self.video_label.config(image="", text="Video preview will appear here",
                                 bg="#000000", fg="#555555")
+        self.video_frame.config(bg="#1a1a1a")
 
     def _flash_alert(self):
-        """Briefly flash video border red for HR alerts."""
-        self.video_label.config(bg="#dc2626")
-        self.root.after(250, lambda: self.video_label.config(bg="#000000"))
+        """Flash the video border red — debounced to once every 2 s."""
+        now = time.time()
+        if now - self._flash_last_ts < 2.0:
+            return
+        self._flash_last_ts = now
+        self.video_frame.config(bg="#dc2626")
+        self.root.after(600, lambda: self.video_frame.config(bg="#1a1a1a"))
 
     # ─────────────────────────────────────────────────────────
     # DETECTION
