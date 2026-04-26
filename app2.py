@@ -12,17 +12,86 @@ Run with:
     python app2.py
 """
 
+import os
 import time
 import threading
 import json
 import urllib.request
+import numpy as np
 from pathlib import Path
 from datetime import datetime
+
+# Suppress FFmpeg/OpenCV internal TCP/stream error noise printed to console
+os.environ.setdefault("OPENCV_LOG_LEVEL", "SILENT")
+os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import cv2
+cv2.setLogLevel(0)   # silence OpenCV C++ logger
 from PIL import Image, ImageTk
+
+
+class MJPEGCapture:
+    """
+    Reliable MJPEG stream reader for ESP32-CAM over HTTP.
+    cv2.VideoCapture fails on Windows with multipart/x-mixed-replace streams;
+    this reads raw JPEG frames by scanning for SOI/EOI markers instead.
+    """
+
+    def __init__(self, url, timeout=5):
+        self.url      = url
+        self._stream  = None
+        self._buf     = b""
+        self._opened  = False
+        try:
+            req = urllib.request.Request(url, headers={"Connection": "keep-alive"})
+            self._stream = urllib.request.urlopen(req, timeout=timeout)
+            self._opened = True
+        except Exception:
+            self._opened = False
+
+    def isOpened(self):
+        return self._opened
+
+    def read(self):
+        if not self._opened:
+            return False, None
+        try:
+            while True:
+                self._buf += self._stream.read(4096)
+                start = self._buf.find(b"\xff\xd8")   # JPEG SOI
+                end   = self._buf.find(b"\xff\xd9")   # JPEG EOI
+                if start != -1 and end != -1 and end > start:
+                    jpg   = self._buf[start:end + 2]
+                    self._buf = self._buf[end + 2:]
+                    arr   = np.frombuffer(jpg, dtype=np.uint8)
+                    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        return True, frame
+        except Exception:
+            self._opened = False
+            return False, None
+
+    def get(self, prop):
+        defaults = {
+            cv2.CAP_PROP_FPS:          15.0,
+            cv2.CAP_PROP_FRAME_COUNT:   0,
+            cv2.CAP_PROP_FRAME_WIDTH:  640,
+            cv2.CAP_PROP_FRAME_HEIGHT: 480,
+        }
+        return defaults.get(prop, 0)
+
+    def set(self, prop, value):
+        return False   # live stream — seek not supported
+
+    def release(self):
+        self._opened = False
+        if self._stream:
+            try:
+                self._stream.close()
+            except Exception:
+                pass
 
 
 YOLO26_VARIANTS = {
@@ -455,7 +524,8 @@ class DogAggressionAppV2:
             return
         self._esp_poll_stop.clear()
         self.esp_connected = True
-        self.esp_status_var.set("Connecting...")
+        self.esp_status_var.set("Connecting…")
+        self.esp_status_lbl.config(fg="#f59e0b")
         self.esp_connect_btn.config(state="disabled")
         self.esp_disconnect_btn.config(state="normal")
         self._esp_poll_thread = threading.Thread(
@@ -468,16 +538,28 @@ class DogAggressionAppV2:
         self._esp_poll_stop.set()
         self.esp_connected = False
         self.esp_status_var.set("Disconnected")
+        self.esp_status_lbl.config(fg="#888888")
         self.esp_dist_var.set("-- cm")
         self.stats_vars["distance"].set("--")
         self.esp_connect_btn.config(state="normal")
         self.esp_disconnect_btn.config(state="disabled")
         self.log("[ESP] Disconnected.")
 
+    def _esp_reset_ui(self, msg, color="#f87171"):
+        """Called from poll thread on give-up: reset buttons and show error."""
+        self.esp_connected = False
+        self.esp_status_var.set(msg)
+        self.esp_status_lbl.config(fg=color)
+        self.esp_dist_var.set("-- cm")
+        self.stats_vars["distance"].set("--")
+        self.esp_connect_btn.config(state="normal")
+        self.esp_disconnect_btn.config(state="disabled")
+
     def _esp_poll_loop(self):
-        ip  = self.esp_ip.get().strip()
-        url = f"http://{ip}/distance"
+        ip       = self.esp_ip.get().strip()
+        url      = f"http://{ip}/distance"
         failures = 0
+        MAX_FAIL = 6   # ~3 s of consecutive timeouts before giving up
 
         while not self._esp_poll_stop.is_set():
             try:
@@ -491,7 +573,7 @@ class DogAggressionAppV2:
                     dist_stat = f"{dist:.0f}"
                 self.root.after(0, self.esp_dist_var.set, dist_str)
                 self.root.after(0, self.stats_vars["distance"].set, dist_stat)
-                self.root.after(0, self.esp_status_var.set, f"Online ({ip})")
+                self.root.after(0, self.esp_status_var.set, f"Online  {ip}")
                 self.root.after(0, self.esp_status_lbl.config, {"fg": "#22c55e"})
                 failures = 0
 
@@ -504,9 +586,20 @@ class DogAggressionAppV2:
 
             except Exception as exc:
                 failures += 1
-                if failures >= 3:
-                    self.root.after(0, self.esp_status_var.set, f"Error: {exc}")
-                    self.root.after(0, self.esp_status_lbl.config, {"fg": "#f87171"})
+                # clean up the raw exception string
+                err_msg = str(exc).replace("<", "").replace(">", "")
+                if failures < MAX_FAIL:
+                    status = f"Retrying… ({failures}/{MAX_FAIL})  {err_msg}"
+                    self.root.after(0, self.esp_status_var.set, status)
+                    self.root.after(0, self.esp_status_lbl.config, {"fg": "#f59e0b"})
+                else:
+                    # Give up — tell the user and re-enable Connect
+                    give_up_msg = f"Cannot reach {ip}  ({err_msg})"
+                    self.root.after(0, self._esp_reset_ui, give_up_msg)
+                    self.root.after(0, self.log,
+                                    f"[ESP] Failed after {MAX_FAIL} attempts. "
+                                    f"Check IP/WiFi and try again.")
+                    return   # exit thread
 
             self._esp_poll_stop.wait(0.5)
 
@@ -596,6 +689,12 @@ class DogAggressionAppV2:
         self.video_label.imgtk = imgtk
         self.video_label.config(image=imgtk, text="")
 
+    def _clear_display(self):
+        """Reset video panel to blank ready-state after detection stops."""
+        self.video_label.imgtk = None
+        self.video_label.config(image="", text="Video preview will appear here",
+                                bg="#000000", fg="#555555")
+
     def _flash_alert(self):
         """Briefly flash video border red for HR alerts."""
         self.video_label.config(bg="#dc2626")
@@ -672,13 +771,51 @@ class DogAggressionAppV2:
                 cap     = cv2.VideoCapture(int(self.cam_index.get()))
                 is_live = True
             else:  # ESP_CAM
-                stream_url = f"http://{self.esp_ip.get().strip()}:81/stream"
-                self.log(f"[ESP-CAM] Connecting: {stream_url}")
-                cap     = cv2.VideoCapture(stream_url)
+                ip         = self.esp_ip.get().strip()
+                stream_url = f"http://{ip}:81/stream"
+                # Pre-flight: confirm ESP is reachable before handing URL to OpenCV
+                self.log(f"[ESP-CAM] Pinging {ip} ...")
+                self._update_status(f"Checking ESP32 at {ip} ...")
+                try:
+                    with urllib.request.urlopen(f"http://{ip}/status", timeout=3) as r:
+                        info = json.loads(r.read())
+                    self.log(f"[ESP-CAM] Device online  RSSI={info.get('wifi_rssi','?')} dBm")
+                except Exception as ping_err:
+                    clean = str(ping_err).replace("<", "").replace(">", "")
+                    raise RuntimeError(
+                        f"ESP32 not reachable at {ip}\n\n"
+                        f"Details: {clean}\n\n"
+                        f"Check:\n"
+                        f"  1. ESP32 is powered and WiFi connected\n"
+                        f"  2. IP address is correct\n"
+                        f"  3. Laptop and ESP32 are on the same WiFi"
+                    )
+                # Use custom MJPEG reader — cv2.VideoCapture fails on Windows
+                # with multipart/x-mixed-replace HTTP streams.
+                self.log(f"[ESP-CAM] Opening MJPEG stream: {stream_url}")
+                self._update_status("Connecting to ESP32-CAM stream ...")
+                cap     = MJPEGCapture(stream_url, timeout=5)
                 is_live = True
 
             if not cap.isOpened():
                 raise RuntimeError("Could not open video source.")
+
+            # Verify first frame arrives (gives up after ~3 s of read attempts)
+            if src == SOURCE_ESP_CAM:
+                self._update_status("Waiting for first frame ...")
+                deadline = time.time() + 6
+                ret_test = False
+                while time.time() < deadline:
+                    ret_test, _ = cap.read()
+                    if ret_test:
+                        break
+                if not ret_test:
+                    cap.release()
+                    raise RuntimeError(
+                        f"ESP32-CAM connected but no frames received within 6 s.\n\n"
+                        f"Stream URL: {stream_url}\n"
+                        f"Make sure the MJPEG server on the ESP32 is running."
+                    )
 
             self._update_status("Processing...")
 
@@ -812,10 +949,25 @@ class DogAggressionAppV2:
             self.model_status.set("Error")
             messagebox.showerror("Error", f"Detection failed:\n{e}")
         finally:
+            # Release model and GPU memory
+            try:
+                del pipeline
+            except NameError:
+                pass
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
             self.is_processing = False
+            self.model_status.set("Idle")
+            self.progress["value"] = 0
             self.start_btn.config(state="normal")
             self.stop_btn.config(state="disabled")
             self.forward_btn.config(state="disabled")
+            self.root.after(0, self._clear_display)
 
     # ─────────────────────────────────────────────────────────
     # HELPERS
