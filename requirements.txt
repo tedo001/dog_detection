@@ -1,5 +1,5 @@
 # Dog Aggression Detection - Dependencies
-
+#esp ip :10.184.69.129
 # Core ML
 torch>=2.0.0
 torchvision>=0.15.0
