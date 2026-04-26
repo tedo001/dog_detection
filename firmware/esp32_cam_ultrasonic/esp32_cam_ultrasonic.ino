@@ -19,12 +19,12 @@
 #include <WebServer.h>
 
 // ==================== CHANGE THESE ====================
-const char* ssid     = "YOUR_WIFI_NAME";     // <-- your WiFi name
-const char* password = "YOUR_WIFI_PASSWORD";  // <-- your WiFi password
+const char* ssid     = "dog";     // <-- your WiFi name
+const char* password = "12345678";  // <-- your WiFi password
 // ======================================================
 
 // HC-SR04 Pins
-#define TRIG_PIN 12
+#define TRIG_PIN 14
 #define ECHO_PIN 13
 
 // AI Thinker ESP32-CAM pin definitions
