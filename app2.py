@@ -12,6 +12,7 @@ Run with:
     python app2.py
 """
 
+import os
 import time
 import threading
 import json
@@ -19,9 +20,14 @@ import urllib.request
 from pathlib import Path
 from datetime import datetime
 
+# Suppress FFmpeg/OpenCV internal TCP/stream error noise printed to console
+os.environ.setdefault("OPENCV_LOG_LEVEL", "SILENT")
+os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")
+
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import cv2
+cv2.setLogLevel(0)   # silence OpenCV C++ logger
 from PIL import Image, ImageTk
 
 
@@ -702,13 +708,44 @@ class DogAggressionAppV2:
                 cap     = cv2.VideoCapture(int(self.cam_index.get()))
                 is_live = True
             else:  # ESP_CAM
-                stream_url = f"http://{self.esp_ip.get().strip()}:81/stream"
-                self.log(f"[ESP-CAM] Connecting: {stream_url}")
+                ip         = self.esp_ip.get().strip()
+                stream_url = f"http://{ip}:81/stream"
+                # Pre-flight: confirm ESP is reachable before handing URL to OpenCV
+                self.log(f"[ESP-CAM] Pinging {ip} ...")
+                self._update_status(f"Checking ESP32 at {ip} ...")
+                try:
+                    with urllib.request.urlopen(f"http://{ip}/status", timeout=3) as r:
+                        info = json.loads(r.read())
+                    self.log(f"[ESP-CAM] Device online  RSSI={info.get('wifi_rssi','?')} dBm")
+                except Exception as ping_err:
+                    clean = str(ping_err).replace("<", "").replace(">", "")
+                    raise RuntimeError(
+                        f"ESP32 not reachable at {ip}\n\n"
+                        f"Details: {clean}\n\n"
+                        f"Check:\n"
+                        f"  1. ESP32 is powered and WiFi connected\n"
+                        f"  2. IP address is correct\n"
+                        f"  3. Laptop and ESP32 are on the same WiFi"
+                    )
+                self.log(f"[ESP-CAM] Opening stream: {stream_url}")
                 cap     = cv2.VideoCapture(stream_url)
                 is_live = True
 
             if not cap.isOpened():
                 raise RuntimeError("Could not open video source.")
+
+            # For ESP-CAM: verify first frame arrives within 4 s
+            if src == SOURCE_ESP_CAM:
+                self._update_status("Waiting for first frame from ESP32-CAM ...")
+                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 4000)
+                ret_test, _ = cap.read()
+                if not ret_test:
+                    cap.release()
+                    raise RuntimeError(
+                        f"ESP32-CAM stream opened but no frames received.\n\n"
+                        f"Stream URL: {stream_url}\n"
+                        f"Check that the MJPEG server is running on the ESP32."
+                    )
 
             self._update_status("Processing...")
 
