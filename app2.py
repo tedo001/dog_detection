@@ -790,8 +790,12 @@ class DogAggressionAppV2:
         self.export_btn.config(state="disabled")
         if src == SOURCE_VIDEO:
             self.forward_btn.config(state="normal")
-        for var in self.stats_vars.values():
-            var.set("0")
+        for key, var in self.stats_vars.items():
+            var.set("--" if key == "distance" else "0")
+
+        # Auto-start ultrasonic sensor if an IP is set and not already polling
+        if self.esp_ip.get().strip() and not self.esp_connected:
+            self.esp_connect()
 
         threading.Thread(target=self._detection_worker, daemon=True).start()
 
