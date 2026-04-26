@@ -455,7 +455,8 @@ class DogAggressionAppV2:
             return
         self._esp_poll_stop.clear()
         self.esp_connected = True
-        self.esp_status_var.set("Connecting...")
+        self.esp_status_var.set("Connecting…")
+        self.esp_status_lbl.config(fg="#f59e0b")
         self.esp_connect_btn.config(state="disabled")
         self.esp_disconnect_btn.config(state="normal")
         self._esp_poll_thread = threading.Thread(
@@ -468,16 +469,28 @@ class DogAggressionAppV2:
         self._esp_poll_stop.set()
         self.esp_connected = False
         self.esp_status_var.set("Disconnected")
+        self.esp_status_lbl.config(fg="#888888")
         self.esp_dist_var.set("-- cm")
         self.stats_vars["distance"].set("--")
         self.esp_connect_btn.config(state="normal")
         self.esp_disconnect_btn.config(state="disabled")
         self.log("[ESP] Disconnected.")
 
+    def _esp_reset_ui(self, msg, color="#f87171"):
+        """Called from poll thread on give-up: reset buttons and show error."""
+        self.esp_connected = False
+        self.esp_status_var.set(msg)
+        self.esp_status_lbl.config(fg=color)
+        self.esp_dist_var.set("-- cm")
+        self.stats_vars["distance"].set("--")
+        self.esp_connect_btn.config(state="normal")
+        self.esp_disconnect_btn.config(state="disabled")
+
     def _esp_poll_loop(self):
-        ip  = self.esp_ip.get().strip()
-        url = f"http://{ip}/distance"
+        ip       = self.esp_ip.get().strip()
+        url      = f"http://{ip}/distance"
         failures = 0
+        MAX_FAIL = 6   # ~3 s of consecutive timeouts before giving up
 
         while not self._esp_poll_stop.is_set():
             try:
@@ -491,7 +504,7 @@ class DogAggressionAppV2:
                     dist_stat = f"{dist:.0f}"
                 self.root.after(0, self.esp_dist_var.set, dist_str)
                 self.root.after(0, self.stats_vars["distance"].set, dist_stat)
-                self.root.after(0, self.esp_status_var.set, f"Online ({ip})")
+                self.root.after(0, self.esp_status_var.set, f"Online  {ip}")
                 self.root.after(0, self.esp_status_lbl.config, {"fg": "#22c55e"})
                 failures = 0
 
@@ -504,9 +517,20 @@ class DogAggressionAppV2:
 
             except Exception as exc:
                 failures += 1
-                if failures >= 3:
-                    self.root.after(0, self.esp_status_var.set, f"Error: {exc}")
-                    self.root.after(0, self.esp_status_lbl.config, {"fg": "#f87171"})
+                # clean up the raw exception string
+                err_msg = str(exc).replace("<", "").replace(">", "")
+                if failures < MAX_FAIL:
+                    status = f"Retrying… ({failures}/{MAX_FAIL})  {err_msg}"
+                    self.root.after(0, self.esp_status_var.set, status)
+                    self.root.after(0, self.esp_status_lbl.config, {"fg": "#f59e0b"})
+                else:
+                    # Give up — tell the user and re-enable Connect
+                    give_up_msg = f"Cannot reach {ip}  ({err_msg})"
+                    self.root.after(0, self._esp_reset_ui, give_up_msg)
+                    self.root.after(0, self.log,
+                                    f"[ESP] Failed after {MAX_FAIL} attempts. "
+                                    f"Check IP/WiFi and try again.")
+                    return   # exit thread
 
             self._esp_poll_stop.wait(0.5)
 
