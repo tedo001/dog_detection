@@ -140,7 +140,8 @@ class DogAggressionAppV2:
         self._flash_last_ts     = 0.0   # debounce for red flash
 
         # alert type
-        self.alert_type = tk.StringVar(value="normal")   # "normal" | "hr"
+        self.alert_type       = tk.StringVar(value="normal")   # "normal" | "hr"
+        self.alert_sound_on   = tk.BooleanVar(value=True)       # beep sound enabled
 
         # processing
         self.is_processing  = False
@@ -388,7 +389,27 @@ class DogAggressionAppV2:
             bg="#252525", fg="#666666",
             font=("Segoe UI", 8), wraplength=330, justify="left",
         )
-        self.alert_hint.pack(anchor="w", padx=15, pady=(2, 10))
+        self.alert_hint.pack(anchor="w", padx=15, pady=(2, 6))
+
+        # Beep sound toggle row
+        sound_row = tk.Frame(parent, bg="#252525")
+        sound_row.pack(fill="x", padx=15, pady=(0, 4))
+
+        tk.Checkbutton(
+            sound_row, text="Beep sound on alert",
+            variable=self.alert_sound_on,
+            bg="#252525", fg="#cccccc", selectcolor="#1e1e1e",
+            activebackground="#252525", activeforeground="#f59e0b",
+            font=("Segoe UI", 9), anchor="w",
+        ).pack(side="left")
+
+        tk.Button(
+            sound_row, text="Test beep",
+            command=lambda: self._play_alert_sound(self.alert_type.get()),
+            bg="#374151", fg="#f59e0b", relief="flat",
+            font=("Segoe UI", 8), padx=8, pady=2, cursor="hand2",
+        ).pack(side="left", padx=(10, 0))
+
         self._on_alert_type_change()
 
         # ── 4. YOLO26 Model Size ──────────────────────────────
@@ -545,12 +566,12 @@ class DogAggressionAppV2:
     def _on_alert_type_change(self):
         if self.alert_type.get() == "hr":
             self.alert_hint.config(
-                text="HR mode: risk threshold lowered by 0.10, visual red flash + bell on every alert.",
+                text="HR mode: threshold -0.10, red flash + 3× beep on every alert.",
                 fg="#f87171",
             )
         else:
             self.alert_hint.config(
-                text="Normal mode: standard thresholds, bell sound on detection.",
+                text="Normal mode: standard thresholds, single beep on detection.",
                 fg="#666666",
             )
 
@@ -775,19 +796,17 @@ class DogAggressionAppV2:
         self.video_frame.config(bg="#1a1a1a")
 
     def _play_alert_sound(self, alert_type: str):
-        """Play a loud beep in a background daemon thread (non-blocking)."""
+        """Play a loud beep in a background daemon thread (non-blocking).
+        Respects the alert_sound_on toggle unless called directly (e.g. Test button)."""
         def _beep():
             if _winsound:
                 if alert_type == "hr":
-                    # Three rapid high-pitched beeps for HR alert
                     for _ in range(3):
                         _winsound.Beep(1500, 250)
                         time.sleep(0.05)
                 else:
-                    # Single lower beep for normal alert
                     _winsound.Beep(1000, 600)
             else:
-                # Non-Windows fallback: system bell via Tkinter
                 self.root.after(0, self.root.bell)
         threading.Thread(target=_beep, daemon=True).start()
 
@@ -999,7 +1018,8 @@ class DogAggressionAppV2:
                             f"[{entry['time']}] {prefix} dog#{a['track_id']} "
                             f"risk={a['risk']:.2f}  frame {frame_count}"
                         )
-                    self._play_alert_sound(alert_t)
+                    if self.alert_sound_on.get():
+                        self._play_alert_sound(alert_t)
                     if alert_t == "hr":
                         self.root.after(0, self._flash_alert)
 
