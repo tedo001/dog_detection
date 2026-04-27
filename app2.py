@@ -13,6 +13,7 @@ Run with:
 """
 
 import os
+import sys
 import time
 import threading
 import json
@@ -20,6 +21,12 @@ import urllib.request
 import numpy as np
 from pathlib import Path
 from datetime import datetime
+
+# Windows-only loud beep via winsound; fall back to Tkinter bell on other OS
+if sys.platform == "win32":
+    import winsound as _winsound
+else:
+    _winsound = None
 
 # Suppress FFmpeg/OpenCV internal TCP/stream error noise printed to console
 os.environ.setdefault("OPENCV_LOG_LEVEL", "SILENT")
@@ -767,6 +774,23 @@ class DogAggressionAppV2:
                                 bg="#000000", fg="#555555")
         self.video_frame.config(bg="#1a1a1a")
 
+    def _play_alert_sound(self, alert_type: str):
+        """Play a loud beep in a background daemon thread (non-blocking)."""
+        def _beep():
+            if _winsound:
+                if alert_type == "hr":
+                    # Three rapid high-pitched beeps for HR alert
+                    for _ in range(3):
+                        _winsound.Beep(1500, 250)
+                        time.sleep(0.05)
+                else:
+                    # Single lower beep for normal alert
+                    _winsound.Beep(1000, 600)
+            else:
+                # Non-Windows fallback: system bell via Tkinter
+                self.root.after(0, self.root.bell)
+        threading.Thread(target=_beep, daemon=True).start()
+
     def _flash_alert(self):
         """Flash the video border red — debounced to once every 2 s."""
         now = time.time()
@@ -975,7 +999,7 @@ class DogAggressionAppV2:
                             f"[{entry['time']}] {prefix} dog#{a['track_id']} "
                             f"risk={a['risk']:.2f}  frame {frame_count}"
                         )
-                    self.root.after(0, self.root.bell)
+                    self._play_alert_sound(alert_t)
                     if alert_t == "hr":
                         self.root.after(0, self._flash_alert)
 
