@@ -33,6 +33,7 @@ Commands
 
   # Full options:
   python finetune.py --data D:/my_dog_photos --base-model yolo26x.pt --epochs 30 --batch 8 --freeze 10 --device cuda:0
+  only for a cuda computing and its only better for a gpu setup above 3050 rtx
 """
 
 import argparse
