@@ -1,5 +1,7 @@
 # Dog Aggression Detection - Dependencies
-#esp ip :10.184.69.129
+#esp ip :1'
+ #venv_gpu\Scripts\Activate
+#firmware\esp32_cam_ultrasonic\esp32_cam_ultrasonic.ino
 # Core ML
 torch>=2.0.0
 torchvision>=0.15.0
