@@ -131,7 +131,6 @@ class DogAggressionApp:
             anchor="w",
         )
         self.path_label.pack(fill="x", padx=15, pady=(0, 8))
-
         btn_frame = tk.Frame(parent, bg="#252525")
         btn_frame.pack(fill="x", padx=15, pady=(0, 15))
 
