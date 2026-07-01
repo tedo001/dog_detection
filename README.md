@@ -203,7 +203,7 @@ GPU: NVIDIA GPU with CUDA support recommended. Tested on RTX 3050.
 
 ## Tech Stack
 
-- **Detection**: YOLOv8 (Ultralytics)
+- **Detection**: YOLO(yolo26x,yolo26n....ect.....) (Ultralytics)
 - **Classification**: ResNet18 / MobileNetV3 (torchvision)
 - **Augmentation**: Albumentations
 - **GUI**: Tkinter + OpenCV + Pillow
