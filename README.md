@@ -192,7 +192,7 @@ inference:
 
 - Python 3.10+
 - PyTorch 2.0+ (CUDA recommended)
-- Ultralytics (YOLOv8)
+- Ultralytics (YOLO)
 - Albumentations
 - OpenCV
 - scikit-learn
