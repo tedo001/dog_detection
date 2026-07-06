@@ -122,6 +122,29 @@ Desktop app with:
 - Alert log with timestamps
 - Export annotated video and alert JSON
 
+### 6b. GUI + Analytics Dashboard (app3.py)
+
+```bash
+python app3.py
+```
+
+`app3.py` is `app2.py` (the YOLO26 edition, with ESP32-CAM + ultrasonic +
+source selection) **plus a statistics/analytics service**:
+
+- **Corrected live counts** — "Dogs" / "Persons" show the number **in the
+  current frame** (and the run summary reports the **peak seen at once**),
+  instead of a per-frame running sum that made 4 dogs read as hundreds.
+- **Per-session recording** — every run is saved to `data/sessions/*.json`
+  (risk timeline, per-frame dog/person counts, alerts, model, settings).
+- **Analytics dashboard** — the **Open Analytics Dashboard** button builds a
+  self-contained offline HTML report (`outputs/dashboard.html`) and opens it:
+  alerts fired, **peak dogs / persons in frame**, frames processed, peak risk,
+  risk over time, dogs-vs-persons detections, alerts by hour, risk
+  distribution, and a per-session table. A session filter scopes every chart
+  and each has a data-table fallback.
+
+`app2.py` is untouched — `app3.py` only extends it.
+
 ### 7. Command-Line Inference
 
 ```bash

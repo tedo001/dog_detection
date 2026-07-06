@@ -9,6 +9,10 @@ experiments/
 runs/
 *.onnx
 
+# Analytics (app3.py) — recorded sessions + generated dashboard
+data/sessions/
+outputs/
+
 # Python
 __pycache__/
 *.pyc
