@@ -25,3 +25,6 @@ tqdm>=4.65.0
 
 # GUI Application
 Pillow>=10.0.0
+
+# Native desktop app (python app4.py) — not needed for app.py / app2.py / app3.py
+PyQt6>=6.5.0

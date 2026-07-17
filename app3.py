@@ -61,9 +61,10 @@ class DogAggressionAppV3(DogAggressionAppV2):
         ).pack(fill="x", pady=(6, 0))
 
     def open_dashboard(self):
-        """Build the HTML analytics dashboard from saved sessions and open it."""
+        """Open the native Tkinter analytics dashboard (no browser)."""
         try:
-            from src.analytics import generate_dashboard, load_sessions
+            from src.analytics import load_sessions
+            from src.analytics.tk_dashboard import DashboardWindow
             n = len(load_sessions())
             if n == 0:
                 messagebox.showinfo(
@@ -72,10 +73,10 @@ class DogAggressionAppV3(DogAggressionAppV2):
                     "Run a detection first — every run is saved automatically, "
                     "then reopen the dashboard.")
                 return
-            path = generate_dashboard(open_browser=True)
-            self.log(f"[analytics] Dashboard ({n} session(s)): {path}")
+            DashboardWindow(self.root)
+            self.log(f"[analytics] Dashboard opened ({n} session(s))")
         except Exception as e:
-            messagebox.showerror("Analytics", f"Could not build dashboard:\n{e}")
+            messagebox.showerror("Analytics", f"Could not open dashboard:\n{e}")
 
     # ── detection worker: app2's loop + stat fix + session recording ──
 
