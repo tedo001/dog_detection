@@ -13,6 +13,11 @@ runs/
 data/sessions/
 outputs/
 
+# Runtime user data (app4.py / app5.py) — registered cameras, hospital registry, logs
+data/cameras.json
+data/hospitals.json
+data/logs/
+
 # Python
 __pycache__/
 *.pyc
