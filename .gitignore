@@ -13,6 +13,15 @@ runs/
 data/sessions/
 outputs/
 
+# Runtime user data (app4.py / app5.py) — registered cameras, hospital registry, logs
+data/cameras.json
+data/hospitals.json
+data/logs/
+
+# City worker (city_worker.py) — SQLite DB + real camera list (has credentials)
+data/city.db
+config/city_cameras.json
+
 # Python
 __pycache__/
 *.pyc
