@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Ward1-MarketRoad",
+    "url": "rtsp://user:pass@192.168.1.64:554/stream1",
+    "lat": 11.0168,
+    "lon": 76.9558
+  },
+  {
+    "name": "Ward1-BusShelter",
+    "url": "rtsp://user:pass@192.168.1.65:554/stream1",
+    "lat": 11.0205,
+    "lon": 76.9601
+  },
+  {
+    "name": "Ward2-ParkGate",
+    "url": "http://192.168.1.120:81/stream",
+    "lat": 11.0102,
+    "lon": 76.9489
+  }
+]
