@@ -1076,7 +1076,7 @@ class MonitorThread(QThread):
                 raise RuntimeError("Could not open the video source.")
 
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            if fps <= 0:
+            if not (1.0 < fps <= 120.0):   # guard odd/low mp4 metadata (else RT pacing crawls)
                 fps = 30.0
             total_frames = 0 if is_live else int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
@@ -1438,10 +1438,11 @@ class MainWindow(QMainWindow):
         hint.setObjectName("hint"); hint.setWordWrap(True)
         g.addWidget(hint)
         self.realtime_check = QCheckBox("Real-time playback (play at true speed, drop frames)")
-        self.realtime_check.setChecked(True)
+        self.realtime_check.setChecked(False)   # default OFF: analyse every frame at full GPU speed
         g.addWidget(self.realtime_check)
-        rt_hint = QLabel("On: video plays at actual speed even on a slow PC "
-                         "(analyses fewer frames). Off: analyse every frame.")
+        rt_hint = QLabel("Off (default, recommended): analyse EVERY frame at full "
+                         "GPU speed. On: play at true video speed, dropping frames "
+                         "the pipeline can't keep up with — useful only on a slow PC.")
         rt_hint.setObjectName("hint"); rt_hint.setWordWrap(True)
         g.addWidget(rt_hint)
         self.save_check = QCheckBox("Save annotated output video")
