@@ -30,10 +30,24 @@ class DogDetector:
     """Ultralytics YOLO wrapper that returns persons (w/ optional pose) + dogs."""
 
     def __init__(self, model_path="yolo11m.pt", pose_model="yolo11m-pose.pt",
-                 conf=0.35, iou=0.45):
+                 conf=0.35, iou=0.45, imgsz=640, device=None, half=None):
         self.model = YOLO(model_path)
         self.conf = conf
         self.iou = iou
+        self.imgsz = int(imgsz) if imgsz else 640
+
+        # Pick the compute device once (GPU if available) and use FP16 there.
+        # Half precision ~doubles inference throughput on CUDA with negligible
+        # accuracy loss; it is unsupported / slower on CPU, so keep it off there.
+        if device is None:
+            try:
+                import torch
+                device = 0 if torch.cuda.is_available() else "cpu"
+            except Exception:
+                device = "cpu"
+        self.device = device
+        self.half = (device != "cpu") if half is None else bool(half)
+
         self.pose = YOLO(pose_model) if pose_model else None
 
     def detect(self, frame):
@@ -52,6 +66,9 @@ class DogDetector:
             source=frame,
             conf=self.conf,
             iou=self.iou,
+            imgsz=self.imgsz,
+            half=self.half,
+            device=self.device,
             classes=[COCO_PERSON, COCO_DOG],
             verbose=False,
         )
@@ -82,6 +99,9 @@ class DogDetector:
                 source=frame,
                 conf=self.conf,
                 iou=self.iou,
+                imgsz=self.imgsz,
+                half=self.half,
+                device=self.device,
                 verbose=False,
             )
             for result in pose_results:
