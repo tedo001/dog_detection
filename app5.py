@@ -1052,7 +1052,7 @@ class MonitorThread(QThread):
             pipeline = DogAggressionPipeline(
                 detector_path=m["model"], pose_model=m["pose"],
                 det_conf=m["det_conf"], risk_threshold=m["eff_risk"],
-                sustain_frames=m["sustain"])
+                sustain_frames=m["sustain"], imgsz=m.get("imgsz", 640))
             self.computeMsg.emit(getattr(pipeline, "compute", None) or _compute_string())
 
             is_live = m["is_live"]
