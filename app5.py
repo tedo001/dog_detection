@@ -511,6 +511,63 @@ __MARKERS__
 </script></body></html>"""
 
 
+# ── demo / showcase data (for prototype screenshots without live cameras) ──
+# Sample geotagged cameras + hospitals around a city centre (Coimbatore), plus
+# a couple of synthetic analytics sessions, so the Map, Dashboard and
+# nearest-hospital alert all look populated in a demo. Loaded on demand via the
+# "Load demo data" button or `python app5.py --demo` — never touched otherwise.
+
+DEMO_CAMERAS = [
+    {"name": "Gandhipuram Market", "url": "demo://cam1", "lat": 11.0177, "lon": 76.9702},
+    {"name": "Ukkadam Bus Stand", "url": "demo://cam2", "lat": 10.9948, "lon": 76.9605},
+    {"name": "RS Puram Park Gate", "url": "demo://cam3", "lat": 11.0103, "lon": 76.9451},
+    {"name": "Town Hall Junction", "url": "demo://cam4", "lat": 11.0021, "lon": 76.9662},
+    {"name": "Saibaba Colony School", "url": "demo://cam5", "lat": 11.0301, "lon": 76.9452},
+    {"name": "Singanallur Lake Road", "url": "demo://cam6", "lat": 11.0032, "lon": 77.0121},
+]
+
+DEMO_HOSPITALS = [
+    {"name": "Coimbatore Medical College Hosp.", "lat": 11.0261, "lon": 76.9758, "phone": "108"},
+    {"name": "PSG Hospitals", "lat": 11.0272, "lon": 77.0012, "phone": "0422 4345353"},
+    {"name": "KMCH Kovai", "lat": 11.0452, "lon": 76.9821, "phone": "0422 4323800"},
+    {"name": "Ganga Hospital", "lat": 11.0081, "lon": 76.9723, "phone": "0422 2485000"},
+]
+
+
+def _make_demo_session(session_id, started, model, offset):
+    """Synthetic analytics session matching the recorder schema, so the
+    Dashboard charts fill in for a demo screenshot."""
+    import math as _m
+    tl, al = [], []
+    dogs_total = persons_total = 0
+    peak = 0.0
+    for i in range(200):
+        t = round(i * 0.5, 2)
+        risk = round(min(1.0, 0.14 + 0.55 * _m.exp(-((i - 110 - offset) ** 2) / 700)
+                         + ((i * 37) % 11) / 120.0), 3)
+        dogs = [2, 3, 4, 4, 5][(i * 7) % 5]
+        persons = [1, 1, 2][(i * 5) % 3]
+        dogs_total += dogs; persons_total += persons
+        peak = max(peak, risk)
+        tl.append({"t": t, "risk": risk, "dogs": dogs, "persons": persons})
+        if risk > 0.5 and (not al or t - al[-1]["t"] > 16):
+            beh = "charging at person" if risk > 0.7 else "approaching person"
+            al.append({"t": t, "frame": i, "track_id": 1, "risk": risk,
+                       "behavior": beh, "alert_type": "normal",
+                       "features": {"distance": round(0.6 + risk * 0.3, 2),
+                                    "velocity": round(risk, 2),
+                                    "posture": round(risk * 0.6, 2),
+                                    "human_pose": 0.0}})
+    return {
+        "schema": 1, "session_id": session_id, "started": started,
+        "ended": started, "duration_s": 100.0, "source": "video", "model": model,
+        "alert_type": "normal", "risk_threshold": 0.35, "det_conf": 0.35,
+        "frames_read": 200, "frames_processed": 200, "avg_fps": 27.0,
+        "dogs_total": dogs_total, "persons_total": persons_total,
+        "peak_risk": peak, "alerts_total": len(al), "alerts": al, "timeline": tl,
+    }
+
+
 # ── collapsible section (chevron header, like a proper sidebar) ───────
 
 class CollapsibleSection(QWidget):
@@ -1791,6 +1848,10 @@ class MainWindow(QMainWindow):
         export = QPushButton("Export interactive map (HTML)")
         export.clicked.connect(self._export_map_html)
         bar.addWidget(export)
+        demo = QPushButton("🎬  Load demo data")
+        demo.setObjectName("accent")
+        demo.clicked.connect(self._load_demo)
+        bar.addWidget(demo)
         bw = QWidget(); bw.setLayout(bar); v.addWidget(bw)
 
         self.map_widget = MapWidget(height=340)
@@ -1822,6 +1883,69 @@ class MainWindow(QMainWindow):
         self._refresh_hospital_list()
         self._refresh_map()
         return page
+
+    def _load_demo(self):
+        """Populate sample cameras, hospitals, analytics sessions and a
+        simulated alert — for a prototype showcase with no live camera/GPU."""
+        # cameras: merge demo cameras into the registry (dedupe by name)
+        cams = load_cameras()
+        have = {c.get("name") for c in cams}
+        for c in DEMO_CAMERAS:
+            if c["name"] not in have:
+                cams.append(dict(c))
+        save_cameras(cams)
+
+        # hospitals: ensure the demo hospitals are present (dedupe by name)
+        hnames = {h.get("name") for h in self.hospitals}
+        for h in DEMO_HOSPITALS:
+            if h["name"] not in hnames:
+                self.hospitals.append(dict(h))
+        save_hospitals(self.hospitals)
+
+        # analytics: seed two sample sessions so the Dashboard charts fill
+        try:
+            sdir = PROJECT_ROOT / "data" / "sessions"
+            sdir.mkdir(parents=True, exist_ok=True)
+            for sid, started, model, off in [
+                ("20260728_101500", "2026-07-28T10:15:00", "yolo26n.pt", 0),
+                ("20260728_143000", "2026-07-28T14:30:00", "yolo26s.pt", 35),
+            ]:
+                fp = sdir / f"session_{sid}.json"
+                if not fp.exists():
+                    fp.write_text(json.dumps(_make_demo_session(sid, started, model, off)),
+                                  encoding="utf-8")
+        except Exception as e:
+            self.logger.warning(f"demo sessions not written: {e}")
+
+        # simulate an active alert on the map: active camera -> nearest hospital
+        active = DEMO_CAMERAS[0]
+        self._active_cam_name = active["name"]
+        self._active_loc = (active["lat"], active["lon"])
+        self._active_is_live = False
+        hsp, dist = nearest_hospital(active["lat"], active["lon"], self.hospitals)
+        link = (self._active_loc, (float(hsp["lat"]), float(hsp["lon"]))) if hsp else None
+        if hsp:
+            phone = hsp.get("phone", "")
+            self.resp_label.setText(
+                f"⚠ DEMO ALERT at {active['name']} — dog#7 "
+                f"(charging at person, risk 0.82).\n"
+                f"Nearest hospital: {hsp['name']}  ·  {dist:.2f} km"
+                + (f"  ·  ☎ {phone}" if phone else ""))
+            self.resp_label.setStyleSheet("font-size:14px; color:#fca5a5; font-weight:600;")
+
+        self._refresh_hospital_list()
+        self._refresh_cctv_combo()
+        self._refresh_dashboard(force=True)
+        # switch to the map first (that fires _on_tab_changed -> _refresh_map),
+        # then draw the alert overlay LAST so it isn't cleared by the tab switch.
+        self.tabs.setCurrentIndex(self.TAB_MAP)
+        self._refresh_map(active=active["name"], alert=bool(hsp), link=link)
+        self.logger.info("Demo data loaded (sample cameras, hospitals, sessions, alert)")
+        QMessageBox.information(
+            self, "Demo data loaded",
+            "Loaded sample cameras + hospitals on the map, seeded two analytics "
+            "sessions for the Dashboard, and simulated a nearest-hospital alert.\n\n"
+            "Demo cameras are for the map/showcase only — they do not stream video.")
 
     def _refresh_map(self, active=None, alert=False, link=None):
         if not hasattr(self, "map_widget"):
@@ -2373,6 +2497,8 @@ def main():
     app.setStyleSheet(DARK_QSS)
     win = MainWindow()
     win.show()
+    if "--demo" in sys.argv:
+        win._load_demo()
     sys.exit(app.exec())
 
 
