@@ -59,7 +59,8 @@ except AttributeError:
     pass
 
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QTimer, QRectF, QPointF
-from PyQt6.QtGui import QImage, QPixmap, QFont, QPainter, QColor, QPen, QBrush, QPainterPath
+from PyQt6.QtGui import (QImage, QPixmap, QFont, QPainter, QColor, QPen, QBrush,
+                         QPainterPath, QRadialGradient)
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox,
     QSlider, QCheckBox, QRadioButton, QLineEdit, QTextEdit, QSpinBox,
@@ -849,28 +850,32 @@ class MapWidget(QWidget):
         self._active = None
         self._alert = False
         self._link = None      # ((cam_lat, cam_lon), (hosp_lat, hosp_lon))
+        self._heat = []        # [(lat, lon, weight 0..1)] hotspot density
+        self._show_heat = False
 
-    def set_data(self, cams, hosps, active=None, alert=False, link=None):
+    def set_data(self, cams, hosps, active=None, alert=False, link=None,
+                 heat=None, show_heat=False):
         self._cams = [c for c in cams
                       if c.get("lat") is not None and c.get("lon") is not None]
         self._hosps = [h for h in hosps if "lat" in h and "lon" in h]
         self._active, self._alert, self._link = active, alert, link
+        self._heat = heat or []
+        self._show_heat = show_heat
         self.update()
 
     def _bounds(self):
         pts = [(float(c["lat"]), float(c["lon"])) for c in self._cams]
         pts += [(float(h["lat"]), float(h["lon"])) for h in self._hosps]
+        pts += [(float(a), float(o)) for a, o, _ in self._heat]
         if self._link:
             pts += [self._link[0], self._link[1]]
         if not pts:
             return None
         lats = [p[0] for p in pts]; lons = [p[1] for p in pts]
         la0, la1, lo0, lo1 = min(lats), max(lats), min(lons), max(lons)
-        if la1 - la0 < 1e-4:
-            la0 -= 0.005; la1 += 0.005
-        if lo1 - lo0 < 1e-4:
-            lo0 -= 0.005; lo1 += 0.005
-        return la0, la1, lo0, lo1
+        pad_la = (la1 - la0) * 0.12 or 0.006   # always leave breathing room
+        pad_lo = (lo1 - lo0) * 0.12 or 0.006
+        return la0 - pad_la, la1 + pad_la, lo0 - pad_lo, lo1 + pad_lo
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -898,6 +903,23 @@ class MapWidget(QWidget):
             gy = M + (h - 2 * M) * i / 5
             p.drawLine(QPointF(gx, M), QPointF(gx, h - M))
             p.drawLine(QPointF(M, gy), QPointF(w - M, gy))
+
+        # heatmap layer (hotspot density) — drawn under the markers
+        if self._show_heat and self._heat:
+            p.setPen(Qt.PenStyle.NoPen)
+            for hlat, hlon, wgt in self._heat:
+                pt = XY(float(hlat), float(hlon))
+                rad = 34 + 52 * float(wgt)
+                base = (QColor(230, 60, 60) if wgt >= 0.66 else
+                        QColor(240, 180, 40) if wgt >= 0.33 else
+                        QColor(60, 200, 120))
+                grad = QRadialGradient(pt, rad)
+                c0 = QColor(base); c0.setAlpha(150)
+                c1 = QColor(base); c1.setAlpha(55)
+                c2 = QColor(base); c2.setAlpha(0)
+                grad.setColorAt(0.0, c0); grad.setColorAt(0.5, c1); grad.setColorAt(1.0, c2)
+                p.setBrush(QBrush(grad))
+                p.drawEllipse(pt, rad, rad)
 
         if self._link:
             (cl, co), (hl, ho) = self._link
@@ -1258,6 +1280,8 @@ class MainWindow(QMainWindow):
         self._active_cam_name = None
         self._active_loc = None          # (lat, lon) of the monitored camera
         self._active_is_live = False
+        self._show_heat = False
+        self._map_heat = []              # [(lat, lon, weight)] hotspot density
         self._live = deque(maxlen=240)   # (t, risk) from the running monitor
         self._sess_cache = []
         self._sess_mtime = -1.0
@@ -1852,6 +1876,10 @@ class MainWindow(QMainWindow):
         demo.setObjectName("accent")
         demo.clicked.connect(self._load_demo)
         bar.addWidget(demo)
+        self.heat_btn = QPushButton("🔥  Heatmap")
+        self.heat_btn.setCheckable(True)
+        self.heat_btn.clicked.connect(self._toggle_heat)
+        bar.addWidget(self.heat_btn)
         bw = QWidget(); bw.setLayout(bar); v.addWidget(bw)
 
         self.map_widget = MapWidget(height=340)
@@ -1933,6 +1961,15 @@ class MainWindow(QMainWindow):
                 + (f"  ·  ☎ {phone}" if phone else ""))
             self.resp_label.setStyleSheet("font-size:14px; color:#fca5a5; font-weight:600;")
 
+        # heatmap: hotspot density at camera areas (simulated alert counts)
+        weights = [0.9, 0.5, 0.7, 0.3, 0.4, 0.8]
+        self._map_heat = [(c["lat"], c["lon"], w)
+                          for c, w in zip(DEMO_CAMERAS, weights)]
+        self._map_heat += [(11.0105, 76.9640, 0.6), (11.0210, 76.9560, 0.45)]
+        self._show_heat = True
+        if hasattr(self, "heat_btn"):
+            self.heat_btn.setChecked(True)
+
         self._refresh_hospital_list()
         self._refresh_cctv_combo()
         self._refresh_dashboard(force=True)
@@ -1947,14 +1984,27 @@ class MainWindow(QMainWindow):
             "sessions for the Dashboard, and simulated a nearest-hospital alert.\n\n"
             "Demo cameras are for the map/showcase only — they do not stream video.")
 
+    def _toggle_heat(self):
+        self._show_heat = self.heat_btn.isChecked()
+        if self._show_heat and not self._map_heat:
+            # no history yet — seed a light hotspot at each geotagged camera
+            self._map_heat = [(float(c["lat"]), float(c["lon"]), 0.5)
+                              for c in load_cameras() if c.get("lat") is not None]
+        self._refresh_map()
+
     def _refresh_map(self, active=None, alert=False, link=None):
         if not hasattr(self, "map_widget"):
             return
-        cams = load_cameras()
+        cams = list(load_cameras())
+        act = active if active is not None else self._active_cam_name
+        # monitoring a located source that is not a registered camera -> live pin
+        if (self._active_loc and act
+                and not any(c.get("name") == act for c in cams)):
+            cams = cams + [{"name": act, "lat": self._active_loc[0],
+                            "lon": self._active_loc[1]}]
         self.map_widget.set_data(
-            cams, self.hospitals,
-            active=active if active is not None else self._active_cam_name,
-            alert=alert, link=link)
+            cams, self.hospitals, active=act, alert=alert, link=link,
+            heat=self._map_heat, show_heat=self._show_heat)
 
     def _refresh_hospital_list(self):
         while self.h_list.count():
