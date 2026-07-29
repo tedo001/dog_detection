@@ -18,6 +18,10 @@ data/cameras.json
 data/hospitals.json
 data/logs/
 
+# City worker (city_worker.py) — SQLite DB + real camera list (has credentials)
+data/city.db
+config/city_cameras.json
+
 # Python
 __pycache__/
 *.pyc
