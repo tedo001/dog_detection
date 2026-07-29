@@ -83,7 +83,7 @@ def load_config():
     return {
         "detector": {
             "model": "yolo26n.pt",
-            "pose_model": "yolo11n-pose.pt",
+            "pose_model": "yolo11m-pose.pt",   # match app3 (same pose model)
             "conf": 0.35,
             "imgsz": 640,
             "iou": 0.45,
