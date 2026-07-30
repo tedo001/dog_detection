@@ -1052,7 +1052,8 @@ class MonitorThread(QThread):
             pipeline = DogAggressionPipeline(
                 detector_path=m["model"], pose_model=m["pose"],
                 det_conf=m["det_conf"], risk_threshold=m["eff_risk"],
-                sustain_frames=m["sustain"], imgsz=m.get("imgsz", 640))
+                sustain_frames=m["sustain"], imgsz=m.get("imgsz", 640),
+                secondary_model=m.get("secondary"))
             self.computeMsg.emit(getattr(pipeline, "compute", None) or _compute_string())
 
             is_live = m["is_live"]
@@ -1402,6 +1403,9 @@ class MainWindow(QMainWindow):
         self.pose_check = QCheckBox("Use pose model (human skeleton)")
         self.pose_check.setChecked(bool(d.get("pose_model")))
         g.addWidget(self.pose_check)
+        self.secondary_check = QCheckBox("Secondary detector (YOLOE) — catch missed dogs/humans")
+        self.secondary_check.setChecked(False)
+        g.addWidget(self.secondary_check)
         hint = QLabel("Slow? Use a smaller model + pose off. The compute line "
                       "under the video shows GPU vs CPU.")
         hint.setObjectName("hint"); hint.setWordWrap(True)
@@ -2366,6 +2370,7 @@ class MainWindow(QMainWindow):
             "save": self.save_check.isChecked() and not is_live,
             "esp_ip": self.esp_edit.text().strip(),
             "esp_poll": self.esp_poll_check.isChecked() and bool(self.esp_edit.text().strip()),
+            "secondary": "yoloe-11s-seg.pt" if self.secondary_check.isChecked() else None,
         }
 
         self._active_cam_name = desc
