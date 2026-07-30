@@ -46,6 +46,14 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+# Quiet ultralytics' per-call notices (half/augment deprecations) so tiled
+# inference doesn't spam one warning per tile per frame.
+try:
+    from ultralytics.utils import LOGGER as _ULTRA_LOG
+    _ULTRA_LOG.setLevel("ERROR")
+except Exception:
+    pass
+
 
 # COCO class ids used by stock weights
 COCO_PERSON = 0
@@ -91,7 +99,7 @@ class ProDogDetector:
 
     def __init__(self, model: str = "yolo26x.pt", conf: float = 0.25,
                  iou: float = 0.5, imgsz: int = 960, device=None, half=None,
-                 augment: bool = True, tile: bool = False,
+                 augment: bool = False, tile: bool = False,
                  tile_size: int = 640, tile_overlap: float = 0.2,
                  max_det: int = 300, classes=(COCO_PERSON, COCO_DOG)):
         self.model = YOLO(model)
