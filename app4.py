@@ -1198,16 +1198,17 @@ class MainWindow(QMainWindow):
         # — Run —
         sec = CollapsibleSection("6 · Run", expanded=True)
         g = sec.layout_()
-        self.start_btn = QPushButton("▶  Start monitoring"); self.start_btn.setObjectName("primary")
-        self.start_btn.clicked.connect(self._start)
-        g.addWidget(self.start_btn)
+        # Start + Stop side by side so both are always visible together
         run_row = QHBoxLayout()
+        self.start_btn = QPushButton("▶  Start"); self.start_btn.setObjectName("primary")
+        self.start_btn.clicked.connect(self._start)
         self.stop_btn = QPushButton("■  Stop"); self.stop_btn.setObjectName("danger")
         self.stop_btn.setEnabled(False); self.stop_btn.clicked.connect(self._stop)
+        run_row.addWidget(self.start_btn, 2); run_row.addWidget(self.stop_btn, 1)
+        rr = QWidget(); rr.setLayout(run_row); g.addWidget(rr)
         self.fwd_btn = QPushButton("⏩  +10 s"); self.fwd_btn.setEnabled(False)
         self.fwd_btn.clicked.connect(lambda: self.thread and self.thread.request_skip())
-        run_row.addWidget(self.stop_btn); run_row.addWidget(self.fwd_btn)
-        rr = QWidget(); rr.setLayout(run_row); g.addWidget(rr)
+        g.addWidget(self.fwd_btn)
         pl.addWidget(sec)
         pl.addStretch()
 
