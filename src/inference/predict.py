@@ -280,7 +280,7 @@ class DogAggressionPipeline:
                  classifier_path=None, det_conf=0.35, risk_threshold=0.35,
                  aggression_threshold=None, smoothing_alpha=0.6,
                  sustain_frames=2, cooldown_frames=30,
-                 crop_size=224, device="auto", imgsz=640):
+                 crop_size=224, device="auto", imgsz=640, secondary_model=None):
         if aggression_threshold is not None:
             risk_threshold = aggression_threshold
         if detector_path in (None, "", "None"):
@@ -293,6 +293,7 @@ class DogAggressionPipeline:
             conf=det_conf,
             imgsz=imgsz,
             device=det_device,
+            secondary_model=secondary_model,
         )
         self.risk_threshold = risk_threshold
         self.smoothing_alpha = smoothing_alpha

@@ -30,8 +30,24 @@ class DogDetector:
     """Ultralytics YOLO wrapper that returns persons (w/ optional pose) + dogs."""
 
     def __init__(self, model_path="yolo11m.pt", pose_model="yolo11m-pose.pt",
-                 conf=0.35, iou=0.45, imgsz=640, device=None, half=None):
-        self.model = YOLO(model_path)
+                 conf=0.35, iou=0.45, imgsz=640, device=None, half=None,
+                 secondary_model=None):
+        # Open-vocabulary YOLOE models are prompted with class NAMES rather than
+        # fixed COCO ids (detected by filename). Every other model loads as a
+        # normal YOLO detector and behaves exactly as before.
+        self.is_yoloe = "yoloe" in str(model_path).lower()
+        if self.is_yoloe:
+            from ultralytics import YOLOE
+            self.model = YOLOE(model_path)
+            names = ["dog", "person"]
+            try:
+                self.model.set_classes(names, self.model.get_text_pe(names))
+            except Exception as e:
+                print(f"[detector] YOLOE prompt setup failed ({e})")
+            self._dog_ids, self._person_ids = {0}, {1}   # order of the prompt list
+        else:
+            self.model = YOLO(model_path)
+            self._dog_ids, self._person_ids = {COCO_DOG}, {COCO_PERSON}
         self.conf = conf
         self.iou = iou
         self.imgsz = int(imgsz) if imgsz else 640
@@ -50,6 +66,22 @@ class DogDetector:
 
         self.pose = YOLO(pose_model) if pose_model else None
 
+        # Optional SECONDARY open-vocabulary detector (YOLOE). It runs a second
+        # pass prompted with "dog"/"person"; its boxes are merged with the
+        # primary detector's, so dogs/humans the primary misses still get
+        # caught (higher recall). Set secondary_model=None to disable.
+        self.secondary = None
+        if secondary_model:
+            try:
+                from ultralytics import YOLOE
+                self.secondary = YOLOE(secondary_model)
+                names = ["dog", "person"]
+                self.secondary.set_classes(names, self.secondary.get_text_pe(names))
+                self._sec_dog_ids, self._sec_person_ids = {0}, {1}
+            except Exception as e:
+                print(f"[detector] secondary YOLOE disabled ({e})")
+                self.secondary = None
+
     def detect(self, frame):
         """
         Run detection (+ pose if enabled) on a single BGR frame.
@@ -62,16 +94,13 @@ class DogDetector:
             indexed by COCO joint order.
         """
         # Pass 1: detection (person + dog)
-        det_results = self.model.predict(
-            source=frame,
-            conf=self.conf,
-            iou=self.iou,
-            imgsz=self.imgsz,
-            half=self.half,
-            device=self.device,
-            classes=[COCO_PERSON, COCO_DOG],
-            verbose=False,
+        det_kwargs = dict(
+            source=frame, conf=self.conf, iou=self.iou, imgsz=self.imgsz,
+            half=self.half, device=self.device, verbose=False,
         )
+        if not self.is_yoloe:                       # YOLOE already limited to the prompt
+            det_kwargs["classes"] = [COCO_PERSON, COCO_DOG]
+        det_results = self.model.predict(**det_kwargs)
 
         persons = []
         dogs = []
@@ -87,10 +116,33 @@ class DogDetector:
                     "y2": int(box.xyxy[0][3]),
                     "confidence": float(box.conf[0]),
                 }
-                if cls_id == COCO_PERSON:
+                if cls_id in self._person_ids:
                     persons.append(det)
-                elif cls_id == COCO_DOG:
+                elif cls_id in self._dog_ids:
                     dogs.append(det)
+
+        # Secondary detector (YOLOE): union its boxes in, then de-duplicate so
+        # a dog found by both models is counted once (recall up, no doubles).
+        if self.secondary is not None:
+            sec_results = self.secondary.predict(
+                source=frame, conf=self.conf, iou=self.iou, imgsz=self.imgsz,
+                half=self.half, device=self.device, verbose=False)
+            for result in sec_results:
+                if result.boxes is None:
+                    continue
+                for box in result.boxes:
+                    cls_id = int(box.cls[0])
+                    det = {
+                        "x1": int(box.xyxy[0][0]), "y1": int(box.xyxy[0][1]),
+                        "x2": int(box.xyxy[0][2]), "y2": int(box.xyxy[0][3]),
+                        "confidence": float(box.conf[0]),
+                    }
+                    if cls_id in self._sec_person_ids:
+                        persons.append(det)
+                    elif cls_id in self._sec_dog_ids:
+                        dogs.append(det)
+            dogs = _dedupe(dogs)
+            persons = _dedupe(persons)
 
         # Pass 2: pose (only persons). Match keypoints to existing person boxes
         # by IoU so we keep one canonical person list.
@@ -146,6 +198,17 @@ class DogDetector:
         if not best_path.exists():
             raise FileNotFoundError(f"No best.pt at {best_path}")
         self.model = YOLO(str(best_path))
+
+
+def _dedupe(dets, iou_thresh=0.6):
+    """Merge overlapping boxes from the primary + secondary detectors,
+    keeping the highest-confidence one (greedy NMS on dicts)."""
+    order = sorted(dets, key=lambda d: d.get("confidence", 0.0), reverse=True)
+    keep = []
+    for d in order:
+        if all(_iou(d, k) < iou_thresh for k in keep):
+            keep.append(d)
+    return keep
 
 
 def _iou(a, b):
